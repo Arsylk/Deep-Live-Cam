@@ -14,15 +14,12 @@ import os
 import platform
 import queue
 import sys
-import tempfile
 import threading
 import time
-import webbrowser
 from typing import Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
-import requests
 from PIL import Image, ImageOps
 from PySide6.QtCore import (
     QObject,
@@ -199,11 +196,6 @@ QLabel#statusLabel {
     font-size: 10pt;
     font-style: italic;
 }
-QLabel#linkLabel {
-    color: #6ea8ff;
-    text-decoration: underline;
-}
-
 QScrollArea { border: none; background: transparent; }
 
 QFrame#card {
@@ -501,11 +493,8 @@ class MainWindow(QMainWindow):
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._status_label)
 
-        footer = QLabel("Deep Live Cam")
-        footer.setObjectName("linkLabel")
+        footer = QLabel(_("Deep Live Cam · local processing"))
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer.setCursor(Qt.CursorShape.PointingHandCursor)
-        footer.mousePressEvent = lambda _e: webbrowser.open("https://deeplivecam.net")
         layout.addWidget(footer)
 
     # ── image row ────────────────────────────────────────────────────────
@@ -524,15 +513,7 @@ class MainWindow(QMainWindow):
             _("Choose the source face image to swap onto the target")
         )
         self.btn_select_source.clicked.connect(self._on_select_source)
-        self.btn_random_face = QPushButton("🔄")
-        self.btn_random_face.setObjectName("secondary")
-        self.btn_random_face.setFixedWidth(40)
-        self.btn_random_face.setToolTip(
-            _("Get a random face from thispersondoesnotexist.com")
-        )
-        self.btn_random_face.clicked.connect(self._on_random_face)
         src_row.addWidget(self.btn_select_source)
-        src_row.addWidget(self.btn_random_face)
         src_col.addLayout(src_row)
 
         # Swap button column
@@ -775,25 +756,6 @@ class MainWindow(QMainWindow):
             modules.globals.target_path = None
             self.target_label.clear()
             self.target_label.setText(_("Target"))
-
-    def _on_random_face(self) -> None:
-        if _PREVIEW is not None:
-            _PREVIEW.hide()
-        try:
-            response = requests.get(
-                "https://thispersondoesnotexist.com/",
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=10,
-            )
-            response.raise_for_status()
-            temp_path = os.path.join(tempfile.gettempdir(), "deep_live_cam_random_face.jpg")
-            with open(temp_path, "wb") as f:
-                f.write(response.content)
-            modules.globals.source_path = temp_path
-            self.source_label.setPixmap(render_image_preview(temp_path, (200, 200)))
-            self.source_label.setText("")
-        except Exception as exc:
-            print(f"Failed to fetch random face: {exc}")
 
     def _on_swap_paths(self) -> None:
         global _RECENT_SOURCE_DIR, _RECENT_TARGET_DIR
@@ -1065,6 +1027,26 @@ class _ProcessingWorker(QThread):
             temp_frame = frame
             if modules.globals.live_mirror:
                 temp_frame = gpu_flip(temp_frame, 1)
+            detail_reference = (
+                temp_frame.copy()
+                if (
+                    float(
+                        getattr(modules.globals, "repair_camera_detail", 0.0)
+                        or 0.0
+                    )
+                    > 0.0
+                    or float(
+                        getattr(
+                            modules.globals,
+                            "repair_boundary_strength",
+                            0.0,
+                        )
+                        or 0.0
+                    )
+                    > 0.0
+                )
+                else None
+            )
 
             if not modules.globals.map_faces:
                 if (
@@ -1113,23 +1095,37 @@ class _ProcessingWorker(QThread):
                             )
                     elif fp.NAME == "DLC.FACE-SWAPPER":
                         swapped_bboxes = []
+                        paste_regions = []
                         if modules.globals.many_faces and cached_many_faces:
                             result = temp_frame.copy()
                             for t_face in cached_many_faces:
-                                result = fp.swap_face(source_image, t_face, result)
+                                result = fp.swap_face(
+                                    source_image,
+                                    t_face,
+                                    result,
+                                    paste_regions,
+                                )
                                 if hasattr(t_face, "bbox") and t_face.bbox is not None:
                                     swapped_bboxes.append(t_face.bbox.astype(int))
                             temp_frame = result
                         elif cached_target_face is not None:
                             temp_frame = fp.swap_face(
-                                source_image, cached_target_face, temp_frame
+                                source_image,
+                                cached_target_face,
+                                temp_frame,
+                                paste_regions,
                             )
                             if (
                                 hasattr(cached_target_face, "bbox")
                                 and cached_target_face.bbox is not None
                             ):
                                 swapped_bboxes.append(cached_target_face.bbox.astype(int))
-                        temp_frame = fp.apply_post_processing(temp_frame, swapped_bboxes)
+                        temp_frame = fp.apply_post_processing(
+                            temp_frame,
+                            swapped_bboxes,
+                            reference_frame=detail_reference,
+                            paste_regions=paste_regions,
+                        )
                     else:
                         temp_frame = fp.process_frame(source_image, temp_frame)
             else:

@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DeepLiveCam browser test</title>
+<style>
+  body { background:#0b0f14; color:#d7e0ea; font:16px system-ui; margin:2rem; }
+  h1 { color:#7ee787; } video { width:min(960px, 100%); background:#000; border:1px solid #354557; }
+  pre { background:#070b10; border:1px solid #263241; padding:1rem; white-space:pre-wrap; }
+</style>
+<h1>DeepLiveCam browser test</h1>
+<video autoplay muted playsinline></video>
+<pre id="result">Requesting camera permission…</pre>
+<script>
+const output = document.querySelector('#result');
+const video = document.querySelector('video');
+
+function describe(err) {
+  return `${err.name}: ${err.message}\nconstraint: ${err.constraint || '(none reported)'}`;
+}
+
+async function test() {
+  try {
+    // Phase 1: plain request — triggers the permission prompt and uses the
+    // browser's default camera, avoiding exact-deviceId mismatches entirely.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    const track = stream.getVideoTracks()[0];
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    const settings = track.getSettings();
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter(device => device.kind === 'videoinput');
+    output.textContent = `PASS\nActive track: ${track.label}\nState: ${track.readyState}, muted: ${track.muted}\nSettings: ${JSON.stringify(settings, null, 2)}\nCameras: ${cameras.map(c => c.label || '(label hidden)').join(', ')}`;
+    document.title = 'PASS ' + track.label;
+    document.documentElement.dataset.result = 'pass';
+  } catch (error) {
+    output.textContent = `FAIL\n${describe(error)}`;
+    document.title = 'FAIL DeepLiveCam';
+    document.documentElement.dataset.result = 'fail';
+  }
+}
+test();
+</script>

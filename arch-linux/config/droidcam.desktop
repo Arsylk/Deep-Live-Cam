@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=DroidCam
+GenericName=Phone Camera
+Comment=Use a phone as a webcam on the dedicated compatible V4L2 endpoint
+Exec=pkexec /usr/local/bin/droidcam
+TryExec=/usr/local/bin/droidcam
+Icon=droidcam
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=camera;phone;webcam;droidcam;video;
+StartupNotify=true

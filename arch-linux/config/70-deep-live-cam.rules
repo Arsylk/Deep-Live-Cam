@@ -1,0 +1,5 @@
+# Give only the dedicated processed-camera node a stable public name.
+# Matching both its fixed minor and card label prevents an unrelated video42
+# device from receiving the alias.  The physical webcam's udev paths are never
+# rewritten or shadowed.
+SUBSYSTEM=="video4linux", KERNEL=="video42", ATTR{name}=="Xiaomi Cam", GROUP="video", MODE="0660", SYMLINK+="deep-live-cam"

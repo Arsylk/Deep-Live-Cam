@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        The module now acts as the global system front camera: every front-
+        facing physical camera in any app is replaced with the processed
+        stream, and the process denylist (shouldSkipPackage) protects the
+        framework, system UI, camera-extension host, and the module's own
+        packages. Enable the module against "System Framework" plus every app
+        in the manager (LSPosed "Enable for all apps"); the array below is only
+        the default suggestion the manager pre-ticks. "system" is mandatory:
+        the native Remote-Submix capture-permission grant runs in system_server
+        (Vector names that pseudo-package "system"). Remove entries only to
+        narrow scope for testing; add the whole app list to go fully global.
+        Toggle globally at runtime with the kill-switch file
+        /data/local/tmp/vcam_disable without changing scope.
+    -->
+    <string-array name="xposed_scope">
+        <!-- Vector names its System Framework pseudo-package "system". -->
+        <item>system</item>
+        <item>com.moonpay</item>
+        <item>com.zen.application</item>
+        <item>dev.vcam.test</item>
+    </string-array>
+</resources>

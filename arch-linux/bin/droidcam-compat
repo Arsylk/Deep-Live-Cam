@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Keep DroidCam on its own v4l2loopback endpoint.  The Deep-Live-Cam shadow
+# pair deliberately occupies video0/video1 and reports the physical camera's
+# identity, so DroidCam's normal "first matching loopback" discovery is both
+# ambiguous and unsafe in this layout.
+
+program_name=${0##*/}
+case "$program_name" in
+    *cli*)
+        frontend=cli
+        real_binary=${DROIDCAM_REAL_CLI:-/usr/bin/droidcam-cli}
+        ;;
+    *)
+        frontend=gui
+        real_binary=${DROIDCAM_REAL_GUI:-/usr/bin/droidcam}
+        ;;
+esac
+
+show_compat_help() {
+    cat <<'EOF'
+DroidCam / Deep-Live-Cam compatibility launcher
+
+The dedicated DroidCam producer endpoint is /dev/droidcam (normally an alias
+for /dev/video50).  /dev/video0 and /dev/video1 remain owned by the processed
+camera pipeline.
+
+Environment overrides:
+  DROIDCAM_VIDEO_DEVICE  Dedicated V4L2 output node (default: /dev/droidcam)
+  DROIDCAM_CONFIG        Pipeline config file (default: /etc/deep-live-cam-arch.conf)
+  DROIDCAM_REAL_GUI      Packaged GUI binary (default: /usr/bin/droidcam)
+  DROIDCAM_REAL_CLI      Packaged CLI binary (default: /usr/bin/droidcam-cli)
+
+All ordinary arguments are passed through. An explicit -dev=PATH takes
+precedence over DROIDCAM_VIDEO_DEVICE.
+EOF
+}
+
+config_file=${DROIDCAM_CONFIG:-/etc/deep-live-cam-arch.conf}
+device=${DROIDCAM_VIDEO_DEVICE:-}
+if [[ -z "$device" && -r "$config_file" ]]; then
+    device=$(awk -F= '$1 == "DROIDCAM_DEVICE" { print substr($0, index($0, "=") + 1); exit }' \
+        "$config_file")
+fi
+device=${device:-/dev/droidcam}
+explicit_device=0
+for argument in "$@"; do
+    case "$argument" in
+        --compat-help)
+            show_compat_help
+            exit 0
+            ;;
+        -dev=*)
+            device=${argument#-dev=}
+            explicit_device=1
+            ;;
+    esac
+done
+
+if [[ ! -x "$real_binary" ]]; then
+    printf 'droidcam-compat: packaged %s frontend is missing: %s\n' \
+        "$frontend" "$real_binary" >&2
+    exit 69
+fi
+
+if [[ ! -c "$device" ]]; then
+    printf 'droidcam-compat: dedicated camera node is unavailable: %s\n' "$device" >&2
+    printf '%s\n' \
+        'Run the Deep-Live-Cam Arch installer, then reboot if it reports that v4l2loopback is busy.' >&2
+    exit 66
+fi
+
+if ((explicit_device)); then
+    exec "$real_binary" "$@"
+fi
+exec "$real_binary" "-dev=$device" "$@"

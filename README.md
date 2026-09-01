@@ -12,24 +12,6 @@
   <img src="media/demo.gif" alt="Demo GIF" width="800">
 </p>
 
-##  Disclaimer
-
-This deepfake software is designed to be a productive tool for the AI-generated media industry. It can assist artists in animating custom characters, creating engaging content, and even using models for clothing design.
-
-We are aware of the potential for unethical applications and are committed to preventative measures. A built-in check prevents the program from processing inappropriate media (nudity, graphic content, sensitive material like war footage, etc.). We will continue to develop this project responsibly, adhering to the law and ethics. We may shut down the project or add watermarks if legally required.
-
-- Ethical Use: Users are expected to use this software responsibly and legally. If using a real person's face, obtain their consent and clearly label any output as a deepfake when sharing online.
-
-- Content Restrictions: The software includes built-in checks to prevent processing inappropriate media, such as nudity, graphic content, or sensitive material.
-
-- Legal Compliance: We adhere to all relevant laws and ethical guidelines. If legally required, we may shut down the project or add watermarks to the output.
-
-- User Responsibility: We are not responsible for end-user actions. Users must ensure their use of the software aligns with ethical standards and legal requirements.
-
-By using this software, you agree to these terms and commit to using it in a manner that respects the rights and dignity of others.
-
-Users are expected to use this software responsibly and legally. If using a real person's face, obtain their consent and clearly label any output as a deepfake when sharing online. We are not responsible for end-user actions.
-
 ## Pre-built Quickstart
 
 <p align="center">
@@ -318,6 +300,43 @@ pip install onnxruntime-openvino==1.21.0
 ```bash
 python run.py --execution-provider openvino
 ```
+
+**ncnn Vulkan Swapper (Linux/AMD, including Polaris)**
+
+This independent backend uses Mesa Vulkan for the expensive face-swap model
+while keeping detection and recognition on the selected ONNX Runtime provider.
+After the one-time local preparation in
+[arch-linux/ncnn/README.md](arch-linux/ncnn/README.md), it is selected
+automatically and requires no network access at runtime.
+
+```bash
+python run.py --execution-provider cpu --swapper-backend ncnn
+```
+
+**Distilled native-256 swapper (development)**
+
+The repository now includes the complete `DLC-Swap256-M` architecture,
+authorized-data loader, distillation losses, ONNX exporter, hash-pinned local
+runtime contract, learned semantic fusion mask, and application integration.
+It does not include an unqualified or unlicensed trained checkpoint. See
+[native256/README.md](native256/README.md) for training and release gates, and
+[MOBILEFACESWAP_BASELINE.md](MOBILEFACESWAP_BASELINE.md) for the separately
+licensed experimental teacher/baseline path.
+
+An explicitly installed development bundle can be exercised with:
+
+```bash
+python run.py --swapper-model native-256 --swapper-backend ort
+# Linux/Vulkan after the offline package step in native256/README.md:
+python run.py --swapper-model native-256 --swapper-backend ncnn
+```
+
+`--swapper-model auto` admits native-256 only when its local manifest is marked
+`qualified`, explicitly auto-eligible, and backed by a hash-pinned qualification
+report covering every deployed artifact and release gate; otherwise it keeps
+the current INSwapper path. Runtime model selection, validation, and inference
+perform no downloads. Explicit `ncnn` never silently substitutes ORT or a
+different model; backend `auto` may fall back to the same native-256 ONNX graph.
 </details>
 
 ## Usage
@@ -363,6 +382,8 @@ options:
   --max-memory MAX_MEMORY                                  maximum amount of RAM in GB
   --execution-provider {cpu} [{cpu} ...]                   available execution provider (choices: cpu, ...)
   --execution-threads EXECUTION_THREADS                    number of execution threads
+  --swapper-model {auto,inswapper-128,instyle-256,simswap-512,native-256} local face-swap model family
+  --swapper-backend {auto,ort,ncnn}                        face-swap inference backend
   -v, --version                                            show program's version number and exit
 ```
 

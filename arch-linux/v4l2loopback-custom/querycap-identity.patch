@@ -1,0 +1,38 @@
+--- a/v4l2loopback.c
++++ b/v4l2loopback.c
+@@ -219,5 +219,15 @@ module_param_array(card_label, charp, NULL, 0000);
+ MODULE_PARM_DESC(card_label, "card labels for each device");
+ 
++static char *driver_name;
++module_param(driver_name, charp, 0000);
++MODULE_PARM_DESC(driver_name,
++		 "driver name reported by VIDIOC_QUERYCAP (default: \"v4l2 loopback\")");
++
++static char *bus_info;
++module_param(bus_info, charp, 0000);
++MODULE_PARM_DESC(bus_info,
++		 "bus info reported by VIDIOC_QUERYCAP (default: platform:v4l2loopback-N)");
++
+ static bool exclusive_caps[MAX_DEVICES] = {
+ 	[0 ...(MAX_DEVICES - 1)] = V4L2LOOPBACK_DEFAULT_EXCLUSIVECAPS
+ };
+@@ -905,10 +915,16 @@ static int vidioc_querycap(struct file *file, void *fh,
+ 	int device_nr = v4l2loopback_get_vdev_nr(dev->vdev);
+ 	__u32 capabilities = V4L2_CAP_STREAMING | V4L2_CAP_READWRITE;
+ 
+-	strscpy(cap->driver, "v4l2 loopback", sizeof(cap->driver));
++	if (driver_name && *driver_name)
++		strscpy(cap->driver, driver_name, sizeof(cap->driver));
++	else
++		strscpy(cap->driver, "v4l2 loopback", sizeof(cap->driver));
+ 	snprintf(cap->card, sizeof(cap->card), "%s", dev->card_label);
+-	snprintf(cap->bus_info, sizeof(cap->bus_info),
+-		 "platform:v4l2loopback-%03d", device_nr);
++	if (bus_info && *bus_info)
++		strscpy(cap->bus_info, bus_info, sizeof(cap->bus_info));
++	else
++		snprintf(cap->bus_info, sizeof(cap->bus_info),
++			 "platform:v4l2loopback-%03d", device_nr);
+ 
+ 	if (dev->announce_all_caps) {
+ 		capabilities |= V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_OUTPUT;

@@ -22,7 +22,6 @@ from modules.processors.frame._onnx_enhancer import (
 
 NAME = "DLC.FACE-ENHANCER-GPEN512"
 INPUT_SIZE = 512
-MODEL_URL = "https://github.com/harisreedhar/Face-Upscalers-ONNX/releases/download/GPEN-BFR/GPEN-BFR-512.onnx"
 MODEL_FILE = "GPEN-BFR-512.onnx"
 
 ENHANCER = None
@@ -37,9 +36,11 @@ models_dir = os.path.join(
 def pre_check() -> bool:
     model_path = os.path.join(models_dir, MODEL_FILE)
     if not os.path.exists(model_path):
-        update_status(f"Downloading {MODEL_FILE}...", NAME)
-        from modules.utilities import conditional_download
-        conditional_download(models_dir, [MODEL_URL])
+        update_status(
+            f"Local model not found: {model_path}. No download was attempted.",
+            NAME,
+        )
+        return False
     return True
 
 
@@ -55,9 +56,6 @@ def get_enhancer() -> Any:
     with THREAD_LOCK:
         if ENHANCER is None:
             model_path = os.path.join(models_dir, MODEL_FILE)
-            if not os.path.exists(model_path):
-                from modules.utilities import conditional_download
-                conditional_download(models_dir, [MODEL_URL])
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"Model file not found: {model_path}")
             print(f"{NAME}: Loading ONNX model from {model_path}")

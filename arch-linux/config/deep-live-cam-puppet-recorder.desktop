@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Deep-Live-Cam Puppet Recorder
+GenericName=Guided Motion Capture for Prompt Playback
+Comment=Record guided puppet takes and build the assembler segment library
+Exec=pkexec /usr/local/bin/deep-live-cam-puppet-recorder
+TryExec=/usr/local/bin/deep-live-cam-puppet-recorder
+Icon=deep-live-cam
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=camera;puppet;recorder;motion;library;assembler;prerecorded;
+StartupNotify=true
+StartupWMClass=deep-live-cam-puppet-recorder

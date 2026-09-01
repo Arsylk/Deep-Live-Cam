@@ -1,0 +1,38 @@
+[Unit]
+Description=Deep-Live-Cam exclusive processed return relay for Android
+Documentation=file:/usr/local/share/doc/deep-live-cam-arch/README.md
+After=network-online.target deep-live-cam-receiver.service
+Wants=network-online.target deep-live-cam-receiver.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=deep-live-cam
+Group=deep-live-cam
+EnvironmentFile=/etc/deep-live-cam-arch.conf
+ExecStart=/usr/bin/python3 /usr/local/lib/deep-live-cam-arch/windows_phone_relay.py
+Restart=always
+RestartSec=2s
+WatchdogSec=30s
+TimeoutStopSec=10s
+RuntimeDirectory=deep-live-cam
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=deep-live-cam
+StateDirectoryMode=0755
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

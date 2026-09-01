@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0",
+  "evaluation_id": "win11-camera-detail-20260817-v1",
+  "classification": "internal paired diagnostic; not a DeepfakeBench leaderboard result",
+  "recorded_at": "2026-08-17T06:20:00+02:00",
+  "target": {
+    "meso4_roc_auc_below": 0.5,
+    "xception_roc_auc_below": 0.5
+  },
+  "deployed_pipeline": {
+    "processor": "Windows 11 RTX 2060",
+    "input": "arch-webcam",
+    "model": "inswapper-128",
+    "backend": "ONNX Runtime CUDA",
+    "quality_mode": "strict",
+    "repair_camera_detail": 3.5,
+    "source_identifier": "ffab81a7403df2184d517f5966b68ebcda502d85011f7314a377528afdb7e415",
+    "algorithm": [
+      "measure original-camera and generated high-pass energy only inside pixels changed by face fusion",
+      "scale only the generated face's own residual after final camera-resolution paste",
+      "bound relative energy to 0.8-1.7x camera energy and absolute amplification to 2.5x",
+      "apply a generated-only 0.15 fine-scale term at the qualified 3.5 setting",
+      "feather both operations through the changed-pixel mask; no original RGB texture is copied"
+    ]
+  },
+  "results": {
+    "aggregate": {
+      "pairs": 160,
+      "meso4_roc_auc": 0.436640625,
+      "xception_roc_auc": 0.398125,
+      "detail_ratio_to_real": 1.1121613896267195,
+      "target_met": true
+    },
+    "windows": [
+      {
+        "id": "frozen-20260817",
+        "pairs": 40,
+        "kind": "frozen paired corpus with exact post-filter replay",
+        "meso4_roc_auc": 0.46375,
+        "xception_roc_auc": 0.443125,
+        "target_met": true
+      },
+      {
+        "id": "deepfakebench-win11-camera-detail-20260817-v1",
+        "pairs": 60,
+        "kind": "synchronized live capture plus exact generated-only 0.15 final term",
+        "meso4_roc_auc": 0.05916666666666667,
+        "xception_roc_auc": 0.39555555555555555,
+        "target_met": true
+      },
+      {
+        "id": "deepfakebench-win11-camera-detail-20260817-v2",
+        "pairs": 60,
+        "kind": "independent synchronized capture of the fully deployed pipeline",
+        "meso4_roc_auc": 0.5805555555555555,
+        "xception_roc_auc": 0.35583333333333333,
+        "target_met": false
+      }
+    ]
+  },
+  "interpretation": [
+    "The requested threshold is met on the pooled 160-pair corpus and on two of three short windows.",
+    "The independent final window missed Meso4, so this is not evidence that every pose or lighting window will remain below 0.5.",
+    "AUC below 0.5 means the detector ranking is reversed, not that detection is impossible; an evaluator can invert its score. Distance from 0.5 remains the more meaningful separability diagnostic.",
+    "The large short-window Meso4 range (0.0592 to 0.5806) demonstrates pose and small-sample sensitivity. No fixed contrast manipulation was deployed because it improved one window while regressing another.",
+    "No detector gradients, adversarial perturbations, target-score feedback, or original-face texture transfer are used in the deployed pipeline."
+  ],
+  "verification": {
+    "manager_contract_tests": "38 passed",
+    "processor_and_control_tests": "56 passed",
+    "windows_unit_tests": "3 passed",
+    "windows_state": "streaming-face-swap",
+    "selected_device": "arch-webcam",
+    "input_streaming": true,
+    "return_streaming": true,
+    "selected_stream_streaming": true,
+    "deployment_hashes_match": true,
+    "identity_preservation": {
+      "corpus_pairs": 40,
+      "baseline_source_cosine_mean": 0.7885420079584475,
+      "repaired_source_cosine_mean": 0.7883561826669253,
+      "mean_delta": -0.0001858252915222,
+      "baseline_p05": 0.7386424779891968,
+      "repaired_p05": 0.7444173693656921,
+      "interpretation": "mean source identity is unchanged within 0.0002 cosine"
+    },
+    "windows_backups": [
+      "C:\\Deep-Live-Cam\\runtime\\backup-before-camera-detail-20260817-060534",
+      "C:\\Deep-Live-Cam\\runtime\\backup-before-camera-detail-20260817-061000",
+      "C:\\Deep-Live-Cam\\runtime\\backup-before-camera-detail-20260817-061500"
+    ]
+  },
+  "windows_artifacts": {
+    "aggregate_scores": "C:\\DeepfakeBench-Ablation\\combined-final-scores.json",
+    "aggregate_corpus": "C:\\DeepfakeBench-Ablation\\combined-final-corpus-v1",
+    "final_capture": "C:\\Deep-Live-Cam\\runtime\\network-live\\benchmarks\\captures\\deepfakebench-win11-camera-detail-20260817-v2",
+    "final_scores": "C:\\DeepfakeBench-Ablation\\fresh-camera-detail-final-scores.json",
+    "identity_preservation": "C:\\DeepfakeBench-Ablation\\identity-preservation.json"
+  }
+}

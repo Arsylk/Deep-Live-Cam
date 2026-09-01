@@ -1,0 +1,36 @@
+{
+  "model": {
+    "input_size": 256,
+    "identity_size": 512,
+    "conditioner_hidden": 128,
+    "channels": [32, 48, 72, 112, 160],
+    "safety_inner_radius": 0.82,
+    "safety_outer_radius": 1.0
+  },
+  "losses": {
+    "teacher_pixel": 20.0,
+    "identity": 8.0,
+    "self_pixel": 20.0,
+    "self_gradient": 2.0,
+    "background": 10.0,
+    "mask_background": 2.0,
+    "mask_foreground": 2.0,
+    "mask_area": 0.02,
+    "mask_tv": 0.1,
+    "temporal_residual": 0.0,
+    "temporal_mask": 0.0
+  },
+  "training": {
+    "seed": 20260814,
+    "batch_size": 8,
+    "workers": 4,
+    "learning_rate": 0.0002,
+    "weight_decay": 0.0001,
+    "steps": 300000,
+    "checkpoint_interval": 5000,
+    "log_interval": 50,
+    "amp": true,
+    "ema_decay": 0.999,
+    "identity_model": null
+  }
+}

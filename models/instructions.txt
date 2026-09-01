@@ -1,4 +1,9 @@
-just put the models in this folder -
+Place already-prepared local model assets in this folder.
 
-https://huggingface.co/hacksider/deep-live-cam/resolve/main/inswapper_128_fp16.onnx?download=true
-https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth
+The application never downloads models at startup. Legacy INSwapper expects
+`inswapper_128.onnx` (or the optional local FP16 variant). Native-256 bundles
+belong in `swappers/native_256/` and must include their hash-pinned
+`manifest.json`, identity map, conditioner, and generator.
+An ncnn-capable native-256 bundle additionally pins the conditioner and
+generator `.ncnn.param`/`.ncnn.bin` pairs in that same manifest; create it only
+with `tools/prepare_native256_ncnn.py`.

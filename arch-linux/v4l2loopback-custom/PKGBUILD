@@ -1,0 +1,40 @@
+pkgname=v4l2loopback-custom
+pkgver=0.15.4
+pkgrel=3
+pkgdesc="v4l2loopback DKMS module with safe VIDIOC_QUERYCAP identity overrides"
+arch=('any')
+url="https://github.com/v4l2loopback/v4l2loopback"
+license=('GPL-2.0-only')
+depends=('dkms')
+provides=("v4l2loopback-dkms=${pkgver}")
+conflicts=('v4l2loopback-dkms')
+source=(
+    "v4l2loopback-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
+    'querycap-identity.patch'
+    'README.md'
+)
+sha256sums=(
+    '21a17702648aa6a937b88a93bd71ef9f547815ead28719cafcfcc247396643dc'
+    '859c98ee6a3f78cb8e1ae9c84afb46722238d1a357c06a95925a11afba890f5b'
+    'bdf07235311c6ad89d69e81d948611fa14f7bafa83dba69944352fd36273a746'
+)
+
+_dkmsver="${pkgver}.safe1"
+
+prepare() {
+    cd "v4l2loopback-${pkgver}"
+    patch -Np1 -i "${srcdir}/querycap-identity.patch"
+    sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${_dkmsver}\"/" dkms.conf
+}
+
+package() {
+    local dkms_source="${pkgdir}/usr/src/v4l2loopback-${_dkmsver}"
+
+    install -d -m 0755 "${dkms_source}"
+    cp -a --no-preserve=ownership \
+        "${srcdir}/v4l2loopback-${pkgver}/." "${dkms_source}/"
+    install -D -m 0644 querycap-identity.patch \
+        "${pkgdir}/usr/share/doc/${pkgname}/querycap-identity.patch"
+    install -D -m 0644 README.md \
+        "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}

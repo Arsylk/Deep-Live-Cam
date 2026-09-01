@@ -1,0 +1,14 @@
+[Unit]
+Description=Commit the staged Deep-Live-Cam virtual-camera topology
+Documentation=file:/usr/local/share/doc/deep-live-cam-arch/README.md
+DefaultDependencies=no
+Before=systemd-modules-load.service deep-live-cam-receiver.service deep-live-cam-sender.service
+ConditionPathExists=/etc/deep-live-cam-arch.conf.nextboot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/install -m 0644 /etc/deep-live-cam-arch.conf.nextboot /etc/deep-live-cam-arch.conf
+ExecStart=/usr/bin/rm -f /etc/deep-live-cam-arch.conf.nextboot
+
+[Install]
+WantedBy=sysinit.target

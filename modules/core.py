@@ -59,6 +59,8 @@ def parse_args() -> None:
     program.add_argument('--max-memory', help='maximum amount of RAM in GB', dest='max_memory', type=int, default=suggest_max_memory())
     program.add_argument('--execution-provider', help='execution provider', dest='execution_provider', default=[suggest_default_execution_provider()], choices=suggest_execution_providers(), nargs='+')
     program.add_argument('--execution-threads', help='number of execution threads', dest='execution_threads', type=int, default=None)
+    program.add_argument('--swapper-model', help='local face-swap model family (auto only selects qualified native-256 assets)', dest='swapper_model', default='auto', choices=['auto', 'inswapper-128', 'instyle-256', 'simswap-512', 'native-256'])
+    program.add_argument('--swapper-backend', help='face-swap inference backend (ncnn uses Vulkan independently of ONNX Runtime)', dest='swapper_backend', default='auto', choices=['auto', 'ort', 'ncnn'])
     program.add_argument('-v', '--version', action='version', version=f'{modules.metadata.name} {modules.metadata.version}')
 
     # register deprecated args
@@ -88,6 +90,8 @@ def parse_args() -> None:
     modules.globals.max_memory = args.max_memory
     modules.globals.execution_providers = decode_execution_providers(args.execution_provider)
     modules.globals.execution_threads = args.execution_threads
+    modules.globals.swapper_model = args.swapper_model
+    modules.globals.swapper_backend = args.swapper_backend
     modules.globals.lang = args.lang
 
     # The argparse default (None) avoids evaluating suggest_execution_threads()

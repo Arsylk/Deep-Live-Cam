@@ -1,0 +1,49 @@
+[Unit]
+Description=Deep-Live-Cam processed SRT receiver and virtual camera
+Documentation=file:/usr/local/share/doc/deep-live-cam-arch/README.md
+After=network-online.target systemd-modules-load.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=deep-live-cam
+Group=deep-live-cam
+SupplementaryGroups=video
+EnvironmentFile=/etc/deep-live-cam-arch.conf
+ExecStart=/usr/bin/python3 /usr/local/lib/deep-live-cam-arch/receiver.py
+# v4l2loopback exclusive_caps starts video42 as OUTPUT-only.  Once this
+# receiver has opened the producer side, re-announce only that verified node
+# so a WirePlumber that enumerated early creates its browser-visible source.
+# '-' keeps a desktop policy refresh failure from taking down the camera sink;
+# '+' gives this single helper access to the sysfs uevent despite User= and the
+# service sandbox. The helper validates video42 plus the cloned driver, card,
+# and bus identity before publishing the change event.
+ExecStartPost=-+/usr/bin/python3 /usr/local/lib/deep-live-cam-arch/publish_virtual_camera.py --device ${LOOPBACK_NODE} --timeout 15
+Restart=always
+RestartSec=2s
+WatchdogSec=30s
+TimeoutStopSec=10s
+RuntimeDirectory=deep-live-cam
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=deep-live-cam
+StateDirectoryMode=0755
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+DevicePolicy=closed
+DeviceAllow=char-video4linux rw
+
+[Install]
+WantedBy=multi-user.target

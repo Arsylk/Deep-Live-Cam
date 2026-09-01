@@ -1,0 +1,9 @@
+# Chromium-derived browsers may enumerate V4L2 directly instead of using
+# PipeWire. Reserve every non-video42 camera node for the dedicated
+# deep-live-cam service account, while leaving /dev/video42 under the normal
+# desktop uaccess policy. This also covers metadata nodes and later webcams.
+#
+# This rule runs after 70-uaccess adds the seat tag and before 73-seat-late
+# applies its ACL. Removing the tag prevents new desktop ACLs; setfacl also
+# clears an ACL left by an earlier event when this policy is deployed live.
+ACTION!="remove", SUBSYSTEM=="video4linux", KERNEL=="video[0-9]*", KERNEL!="video42", GROUP:="deep-live-cam", MODE:="0660", TAG-="uaccess", RUN+="/usr/bin/setfacl --remove-all $env{DEVNAME}"

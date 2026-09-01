@@ -1,4 +1,10 @@
 import os
+
+# The camera pipeline is a LAN appliance. Importing Albumentations through
+# InsightFace must not trigger its optional PyPI version check, especially on
+# machines that are intentionally offline from the public internet.
+os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+
 import cv2
 import numpy as np
 

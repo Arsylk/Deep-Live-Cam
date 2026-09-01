@@ -1,0 +1,37 @@
+[Unit]
+Description=Deep-Live-Cam Android camera local processor
+Documentation=file:/opt/github/Deep-Live-Cam/arch-linux/README.md
+Wants=network-online.target deep-live-cam-receiver.service
+After=network-online.target deep-live-cam-receiver.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/github/Deep-Live-Cam
+Environment=ANDROID_NATIVE_INPUT_HOST=0.0.0.0
+Environment=ANDROID_NATIVE_INPUT_PORT=10001
+Environment=ANDROID_HOST=192.168.1.12
+Environment=ANDROID_NATIVE_RETURN_PORT=10001
+Environment=LOCAL_PROCESSED_PORT=11006
+Environment=LOCAL_PHONE_RELAY_SOURCE_PORT=11009
+Environment=LOCAL_PROCESSOR_CONTROL_SOCKET=/run/deep-live-cam/processor-control.sock
+EnvironmentFile=-/etc/deep-live-cam-arch.conf
+# The receiver owns /run/deep-live-cam.  This root service deliberately does
+# not declare the same RuntimeDirectory: systemd would otherwise alternate its
+# ownership between root and deep-live-cam whenever either service restarts.
+# Ordering after the receiver guarantees the shared control directory exists.
+ExecStartPre=/usr/bin/test -x /opt/github/Deep-Live-Cam/.venv/bin/python
+ExecStartPre=/usr/bin/test -r /opt/github/Deep-Live-Cam/models/ncnn/inswapper_128.ncnn.param
+ExecStartPre=/usr/bin/test -r /opt/github/Deep-Live-Cam/models/ncnn/inswapper_128.ncnn.bin
+ExecStart=/usr/bin/env HOME=${PROCESSOR_HOME} XDG_DATA_HOME=${PROCESSOR_XDG_DATA_HOME} /opt/github/Deep-Live-Cam/.venv/bin/python /opt/github/Deep-Live-Cam/arch-linux/bin/android_stream_processor.py --active false --processing-mode passthrough --input-mode android-front --input-host ${ANDROID_NATIVE_INPUT_HOST} --input-port ${ANDROID_NATIVE_INPUT_PORT} --android-host ${ANDROID_HOST} --return-port ${ANDROID_NATIVE_RETURN_PORT} --phone-relay-port ${LOCAL_PHONE_RELAY_SOURCE_PORT} --preview-port 11012 --system-camera-port ${LOCAL_PROCESSED_PORT} --no-return-audio --control-socket /run/deep-live-cam/processor-control.sock --swapper-model inswapper-128 --swapper-backend ncnn --detection-interval 2 --health-file /run/deep-live-cam/android-phone-processed-health.json
+Restart=always
+RestartSec=2s
+TimeoutStopSec=10s
+KillMode=mixed
+# The health snapshot is a manager input and must be readable by the desktop
+# user. Source images keep their own 0600 mode; the control socket is explicitly
+# 0666 and validates a small allow-listed protocol.
+UMask=0022
+
+[Install]
+WantedBy=default.target

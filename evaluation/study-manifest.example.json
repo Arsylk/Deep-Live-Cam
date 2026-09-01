@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "study": {
+    "name": "Deep-Live-Cam frozen holdout",
+    "protocol": "frozen-holdout",
+    "preregistered": true,
+    "note": "Example structure only; duplicate across the documented coverage matrix."
+  },
+  "duration_seconds": 30,
+  "detector_results": "detector-results.example.jsonl",
+  "subjective_results": "subjective-results.example.jsonl",
+  "samples": [
+    {
+      "id": "android-identity-001-ordinary-still",
+      "identity_id": "identity-001",
+      "reference": "clips/android-identity-001-raw.mp4",
+      "processed": "clips/android-identity-001-return.mp4",
+      "processed_offset_seconds": 0.35,
+      "device": "android-phone",
+      "lighting": "ordinary",
+      "motion": "still",
+      "face_size": "medium",
+      "compression": "nominal",
+      "split": "holdout",
+      "intended_use": "live",
+      "capture_subject_consent": true,
+      "source_identity_authorized": true,
+      "settings": {
+        "processing_mode": "face_swap",
+        "opacity": 1.0,
+        "sharpness": 0.2,
+        "mouth_mask_size": 8.0,
+        "color_match_strength": 0.35,
+        "tracking_enabled": true,
+        "detection_interval": 1,
+        "quality_mode": "balanced"
+      }
+    },
+    {
+      "id": "webcam-identity-002-low-motion",
+      "identity_id": "identity-002",
+      "reference": "clips/webcam-identity-002-raw.mp4",
+      "processed": "clips/webcam-identity-002-return.mp4",
+      "processed_offset_seconds": 0.28,
+      "device": "usb-webcam",
+      "lighting": "low",
+      "motion": "head-motion",
+      "face_size": "large",
+      "compression": "constrained",
+      "split": "holdout",
+      "intended_use": "recorded",
+      "capture_subject_consent": true,
+      "source_identity_authorized": true,
+      "settings": {
+        "processing_mode": "face_swap",
+        "opacity": 1.0,
+        "sharpness": 0.2,
+        "mouth_mask_size": 8.0,
+        "color_match_strength": 0.35,
+        "tracking_enabled": true,
+        "detection_interval": 1,
+        "quality_mode": "balanced"
+      }
+    }
+  ]
+}

@@ -11,24 +11,30 @@ from modules import imread_unicode, imwrite_unicode
 from modules.core import update_status
 from modules.face_analyser import get_one_face, get_many_faces, default_source_face
 from modules.typing import Face, Frame
-from modules.utilities import (
-    conditional_download,
-    is_image,
-    is_video,
-)
+from modules.utilities import is_image, is_video
 from modules.cluster_analysis import find_closest_centroid
 from modules.gpu_processing import gpu_gaussian_blur, gpu_sharpen, gpu_add_weighted, gpu_resize
 from modules.platform_info import OPENVINO_PROVIDER_CONFIG
+from modules.processors.frame.frequency_repair import (
+    FacePasteRegion,
+    apply_frequency_repair,
+    match_camera_detail,
+    reset_camera_detail_state,
+)
+from modules.processors.frame.boundary_repair import content_aware_boundary_mask
+from modules.swapper_contract import SwapResult
 import os
 from collections import deque
 import time
 
 FACE_SWAPPER = None
+FACE_SWAPPER_KEY = None
 THREAD_LOCK = threading.Lock()
 NAME = "DLC.FACE-SWAPPER"
 
 # --- START: Added for Interpolation ---
 PREVIOUS_FRAME_RESULT = None # Stores the final processed frame from the previous step
+_COLOR_MATCH_STATE: dict[int, tuple[np.ndarray, np.ndarray]] = {}
 # --- END: Added for Interpolation ---
 
 # --- Poisson blend (ported from deep-live-cam-gumroad-edition) ---
@@ -190,47 +196,306 @@ models_dir = os.path.join(
 )
 
 def pre_check() -> bool:
-    # Use models_dir instead of abs_dir to save to the correct location
-    download_directory_path = models_dir
-    
-    # Make sure the models directory exists, catch permission errors if they occur
+    # Runtime is deliberately offline. Model preparation is an explicit host
+    # operation; starting the camera must never initiate a network transfer.
     try:
-        os.makedirs(download_directory_path, exist_ok=True)
+        os.makedirs(models_dir, exist_ok=True)
     except OSError as e:
-        logging.error(f"Failed to create directory {download_directory_path} due to permission error: {e}")
+        logging.error(f"Failed to create model directory {models_dir}: {e}")
         return False
-    
-    # Use the direct download URL from Hugging Face (FP32 model for broad GPU compatibility)
-    conditional_download(
-        download_directory_path,
-        [
-            "https://huggingface.co/hacksider/deep-live-cam/resolve/main/inswapper_128.onnx"
-        ],
-    )
     return True
 
 
 def pre_start() -> bool:
-    # Check for either model variant
-    fp16_path = os.path.join(models_dir, "inswapper_128_fp16.onnx")
-    fp32_path = os.path.join(models_dir, "inswapper_128.onnx")
-    if not os.path.exists(fp16_path) and not os.path.exists(fp32_path):
-        update_status(f"Model not found in {models_dir}. Please download inswapper_128.onnx.", NAME)
-        return False
-
-    # Try to get the face swapper to ensure it loads correctly
     if get_face_swapper() is None:
-        # Error message already printed within get_face_swapper
+        update_status(
+            "The requested local face-swap model is unavailable or invalid; "
+            "no network download was attempted.",
+            NAME,
+        )
         return False
-
     return True
 
 
+def _onnx_provider_config() -> list[Any]:
+    """Build the provider list shared by legacy and native ONNX models."""
+    providers_config: list[Any] = []
+    for provider in modules.globals.execution_providers:
+        if provider == "CoreMLExecutionProvider" and IS_APPLE_SILICON:
+            providers_config.append((
+                "CoreMLExecutionProvider",
+                {
+                    "ModelFormat": "MLProgram",
+                    "MLComputeUnits": "ALL",
+                    "SpecializationStrategy": "FastPrediction",
+                    "AllowLowPrecisionAccumulationOnGPU": 1,
+                    "EnableOnSubgraphs": 1,
+                },
+            ))
+        elif provider == "OpenVINOExecutionProvider":
+            providers_config.append(OPENVINO_PROVIDER_CONFIG)
+        else:
+            providers_config.append(provider)
+    return providers_config
+
+
 def get_face_swapper() -> Any:
-    global FACE_SWAPPER
+    global FACE_SWAPPER, FACE_SWAPPER_KEY
 
     with THREAD_LOCK:
-        if FACE_SWAPPER is None:
+        requested_model = getattr(modules.globals, "swapper_model", "auto")
+        requested_backend = getattr(modules.globals, "swapper_backend", "auto")
+        request_key = (
+            requested_model,
+            requested_backend,
+            tuple(str(provider) for provider in modules.globals.execution_providers),
+        )
+        if FACE_SWAPPER is not None and FACE_SWAPPER_KEY == request_key:
+            return FACE_SWAPPER
+        if FACE_SWAPPER is not None:
+            close = getattr(FACE_SWAPPER, "close", None)
+            if callable(close):
+                close()
+            FACE_SWAPPER = None
+            FACE_SWAPPER_KEY = None
+            modules.globals.active_swapper_model = "not-loaded"
+            modules.globals.active_swapper_backend = "not-loaded"
+            modules.globals.active_swapper_resolution = 0
+
+        if requested_model not in (
+            "auto",
+            "inswapper-128",
+            "instyle-256",
+            "simswap-512",
+            "native-256",
+        ):
+            update_status(f"Unsupported face-swap model: {requested_model}", NAME)
+            return None
+        if requested_backend not in ("auto", "ort", "ncnn"):
+            update_status(f"Unsupported face-swap backend: {requested_backend}", NAME)
+            return None
+
+        selected_model = requested_model
+        if selected_model == "auto":
+            selected_model = "inswapper-128"
+            if requested_backend == "ncnn" and platform.system() == "Linux":
+                try:
+                    from modules.native256_ncnn_swapper import (
+                        native256_ncnn_available,
+                    )
+
+                    if native256_ncnn_available(require_qualified=True):
+                        selected_model = "native-256"
+                except (ImportError, OSError):
+                    # An incomplete/development native pack must not displace
+                    # the qualified production model selected by `auto`.
+                    pass
+            elif requested_backend != "ncnn":
+                try:
+                    from modules.native256_swapper import native256_swapper_available
+
+                    if native256_swapper_available(require_qualified=True):
+                        selected_model = "native-256"
+                except ImportError:
+                    pass
+
+        if selected_model == "instyle-256":
+            if requested_backend == "ncnn":
+                update_status(
+                    "InStyleSwapper256 is available through ONNX Runtime only; "
+                    "no backend fallback was used.",
+                    NAME,
+                )
+                return None
+            try:
+                from modules.instyle256_swapper import (
+                    InStyle256Swapper,
+                    instyle256_available,
+                )
+
+                if not instyle256_available():
+                    update_status(
+                        "InStyleSwapper256 was requested, but its hash-pinned "
+                        "local model is unavailable or invalid.",
+                        NAME,
+                    )
+                    return None
+                update_status(
+                    "Loading native 256px InStyleSwapper Version B...", NAME
+                )
+                FACE_SWAPPER = InStyle256Swapper(
+                    providers=_onnx_provider_config()
+                )
+                FACE_SWAPPER_KEY = request_key
+                modules.globals.active_swapper_model = FACE_SWAPPER.model_id
+                modules.globals.active_swapper_backend = FACE_SWAPPER.backend
+                modules.globals.active_swapper_resolution = 256
+                update_status(
+                    f"InStyleSwapper256 ready on {FACE_SWAPPER.device_name}.", NAME
+                )
+                return FACE_SWAPPER
+            except Exception as error:
+                update_status(
+                    f"InStyleSwapper256 initialization failed: {error}", NAME
+                )
+                FACE_SWAPPER = None
+                return None
+
+        if selected_model == "simswap-512":
+            if requested_backend == "ncnn":
+                update_status(
+                    "SimSwap-512 is available through ONNX Runtime only; "
+                    "no backend fallback was used.",
+                    NAME,
+                )
+                return None
+            try:
+                from modules.simswap512_swapper import (
+                    SimSwap512Swapper,
+                    simswap512_available,
+                )
+
+                if not simswap512_available():
+                    update_status(
+                        "SimSwap-512 was requested, but its two hash-pinned "
+                        "local model assets are unavailable or invalid.",
+                        NAME,
+                    )
+                    return None
+                update_status(
+                    "Loading native 512px SimSwap model and paired recognizer...",
+                    NAME,
+                )
+                FACE_SWAPPER = SimSwap512Swapper(
+                    providers=_onnx_provider_config()
+                )
+                FACE_SWAPPER_KEY = request_key
+                modules.globals.active_swapper_model = FACE_SWAPPER.model_id
+                modules.globals.active_swapper_backend = FACE_SWAPPER.backend
+                modules.globals.active_swapper_resolution = 512
+                update_status(
+                    f"SimSwap-512 ready on {FACE_SWAPPER.device_name}.", NAME
+                )
+                return FACE_SWAPPER
+            except Exception as error:
+                update_status(f"SimSwap-512 initialization failed: {error}", NAME)
+                FACE_SWAPPER = None
+                return None
+
+        if selected_model == "native-256":
+            require_qualified = requested_model == "auto"
+            prefer_ncnn = requested_backend in ("auto", "ncnn")
+            if prefer_ncnn and platform.system() == "Linux":
+                try:
+                    from modules.native256_ncnn_swapper import (
+                        Native256NcnnSwapper,
+                        native256_ncnn_available,
+                    )
+
+                    if native256_ncnn_available(
+                        require_qualified=require_qualified
+                    ):
+                        update_status(
+                            "Loading local native-256 ncnn/Vulkan semantic-mask swapper...",
+                            NAME,
+                        )
+                        FACE_SWAPPER = Native256NcnnSwapper(
+                            require_qualified=require_qualified
+                        )
+                        FACE_SWAPPER_KEY = request_key
+                        modules.globals.active_swapper_model = FACE_SWAPPER.spec.model_id
+                        modules.globals.active_swapper_backend = FACE_SWAPPER.backend
+                        modules.globals.active_swapper_resolution = int(
+                            getattr(FACE_SWAPPER, "input_size", (256, 256))[0]
+                        )
+                        update_status(
+                            f"Native-256 ncnn swapper ready on "
+                            f"{FACE_SWAPPER.device_name} "
+                            f"({FACE_SWAPPER.manifest.quality_status}).",
+                            NAME,
+                        )
+                        return FACE_SWAPPER
+                    if requested_backend == "ncnn":
+                        update_status(
+                            "Native-256 ncnn was requested, but its complete "
+                            "hash-pinned local bundle or bridge is unavailable.",
+                            NAME,
+                        )
+                        return None
+                except Exception as error:
+                    FACE_SWAPPER = None
+                    if requested_backend == "ncnn":
+                        update_status(
+                            f"Native-256 ncnn initialization failed: {error}", NAME
+                        )
+                        return None
+                    update_status(
+                        f"Native-256 ncnn unavailable ({error}); using ONNX Runtime.",
+                        NAME,
+                    )
+            elif requested_backend == "ncnn":
+                update_status(
+                    "Native-256 ncnn is available only on Linux; no backend fallback was used.",
+                    NAME,
+                )
+                return None
+            try:
+                from modules.native256_swapper import Native256Swapper
+
+                update_status("Loading local native-256 semantic-mask swapper...", NAME)
+                FACE_SWAPPER = Native256Swapper(
+                    providers=_onnx_provider_config(),
+                    require_qualified=require_qualified,
+                )
+                FACE_SWAPPER_KEY = request_key
+                modules.globals.active_swapper_model = FACE_SWAPPER.spec.model_id
+                modules.globals.active_swapper_backend = FACE_SWAPPER.backend
+                modules.globals.active_swapper_resolution = int(
+                    getattr(FACE_SWAPPER, "input_size", (256, 256))[0]
+                )
+                update_status(
+                    f"Native-256 swapper ready on {FACE_SWAPPER.device_name} "
+                    f"({FACE_SWAPPER.manifest.quality_status}).",
+                    NAME,
+                )
+                return FACE_SWAPPER
+            except Exception as error:
+                update_status(f"Native-256 initialization failed: {error}", NAME)
+                FACE_SWAPPER = None
+                return None
+
+        if selected_model == "inswapper-128":
+            if requested_backend in ("auto", "ncnn") and platform.system() == "Linux":
+                try:
+                    from modules.ncnn_swapper import NcnnSwapper, ncnn_swapper_available
+
+                    if ncnn_swapper_available():
+                        update_status("Loading ncnn Vulkan face swapper...", NAME)
+                        FACE_SWAPPER = NcnnSwapper()
+                        FACE_SWAPPER_KEY = request_key
+                        modules.globals.active_swapper_model = "inswapper-128"
+                        modules.globals.active_swapper_backend = "ncnn"
+                        modules.globals.active_swapper_resolution = 128
+                        update_status(
+                            f"ncnn Vulkan face swapper ready on {FACE_SWAPPER.device_name}.",
+                            NAME,
+                        )
+                        return FACE_SWAPPER
+                    if requested_backend == "ncnn":
+                        update_status(
+                            "ncnn was requested but its local model/library assets are missing.",
+                            NAME,
+                        )
+                        return None
+                except Exception as error:
+                    if requested_backend == "ncnn":
+                        update_status(f"ncnn Vulkan initialization failed: {error}", NAME)
+                        return None
+                    update_status(
+                        f"ncnn Vulkan unavailable ({error}); using ONNX Runtime.",
+                        NAME,
+                    )
+
             # Prefer FP16 on GPUs with Tensor Cores (Turing+) — half the
             # memory bandwidth, faster inference.  Fall back to FP32 for
             # older GPUs (e.g. GTX 16xx) where FP16 can produce NaN.
@@ -253,28 +518,7 @@ def get_face_swapper() -> Any:
 
             update_status(f"Loading face swapper model from: {model_path}", NAME)
             try:
-                providers_config = []
-                for p in modules.globals.execution_providers:
-                    if p == "CoreMLExecutionProvider" and IS_APPLE_SILICON:
-                        # Enhanced CoreML configuration for M1-M5
-                        providers_config.append((
-                            "CoreMLExecutionProvider",
-                            {
-                                "ModelFormat": "MLProgram",
-                                "MLComputeUnits": "ALL",  # Use Neural Engine + GPU + CPU
-                                "SpecializationStrategy": "FastPrediction",
-                                "AllowLowPrecisionAccumulationOnGPU": 1,
-                                "EnableOnSubgraphs": 1,
-                            }
-                        ))
-                    elif p == "CUDAExecutionProvider":
-                        # Use bare provider — ONNX Runtime defaults are
-                        # fastest on modern GPUs (Blackwell/sm_120).
-                        providers_config.append(p)
-                    elif p == "OpenVINOExecutionProvider":
-                        providers_config.append(OPENVINO_PROVIDER_CONFIG)
-                    else:
-                        providers_config.append(p)
+                providers_config = _onnx_provider_config()
                 FACE_SWAPPER = insightface.model_zoo.get_model(
                     model_path,
                     providers=providers_config,
@@ -286,6 +530,10 @@ def get_face_swapper() -> Any:
                     for p in providers_config
                 ):
                     _init_cuda_graph_session(model_path, FACE_SWAPPER)
+                FACE_SWAPPER_KEY = request_key
+                modules.globals.active_swapper_model = "inswapper-128"
+                modules.globals.active_swapper_backend = "ort"
+                modules.globals.active_swapper_resolution = 128
                 update_status("Face swapper model loaded successfully.", NAME)
             except Exception as e:
                 update_status(f"Error loading face swapper model: {e}", NAME)
@@ -307,6 +555,64 @@ _paste_cache = {
     'soft_alpha': None,  # feathered alpha mask in aligned-face space
     'alpha_size': 0,
 }
+
+
+def reset_temporal_state() -> None:
+    """Clear state that must not cross a source or routed-camera change."""
+    global PREVIOUS_FRAME_RESULT, _poisson_cached_mask, _poisson_cached_key
+    PREVIOUS_FRAME_RESULT = None
+    _COLOR_MATCH_STATE.clear()
+    reset_camera_detail_state()
+    _poisson_cached_mask = None
+    _poisson_cached_key = None
+
+
+def _match_aligned_face_color(
+    generated: np.ndarray,
+    target: np.ndarray,
+    strength: float,
+    track_id: int,
+) -> np.ndarray:
+    """Apply bounded, temporally stable LAB statistics matching.
+
+    Only the central feathered face area contributes statistics.  Scale and
+    offset are deliberately bounded so the operation corrects a seam-level
+    mismatch without chasing per-frame exposure noise or flattening identity
+    detail produced by the model.
+    """
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if strength <= 0.0 or generated.shape != target.shape:
+        return generated
+    try:
+        size = generated.shape[0]
+        mask = _get_soft_alpha(size) > 96
+        if int(mask.sum()) < 64:
+            return generated
+        generated_lab = cv2.cvtColor(generated, cv2.COLOR_BGR2LAB).astype(np.float32)
+        target_lab = cv2.cvtColor(target, cv2.COLOR_BGR2LAB).astype(np.float32)
+        generated_pixels = generated_lab[mask]
+        target_pixels = target_lab[mask]
+        generated_mean = generated_pixels.mean(axis=0)
+        generated_std = generated_pixels.std(axis=0) + 1e-3
+        target_mean = target_pixels.mean(axis=0)
+        target_std = target_pixels.std(axis=0) + 1e-3
+        scale = np.clip(target_std / generated_std, 0.85, 1.18)
+        offset = np.clip(target_mean - generated_mean * scale, -12.0, 12.0)
+        previous = _COLOR_MATCH_STATE.get(int(track_id))
+        if previous is not None:
+            # A slow parameter EMA removes auto-exposure/AWB shimmer while the
+            # face tracker handles geometric movement independently.
+            scale = previous[0] * 0.82 + scale * 0.18
+            offset = previous[1] * 0.82 + offset * 0.18
+        _COLOR_MATCH_STATE[int(track_id)] = (scale, offset)
+        effective_scale = 1.0 + (scale - 1.0) * strength
+        effective_offset = offset * strength
+        matched = generated_lab * effective_scale + effective_offset
+        return cv2.cvtColor(
+            np.clip(matched, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR
+        )
+    except (cv2.error, ValueError, TypeError):
+        return generated
 
 
 def _get_soft_alpha(size: int) -> np.ndarray:
@@ -439,7 +745,17 @@ def _cuda_graph_swap_inference(blob: np.ndarray, latent: np.ndarray) -> np.ndarr
         return cg['io_binding'].get_outputs()[0].numpy()
 
 
-def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, M: np.ndarray) -> Frame:
+def _fast_paste_back(
+    target_img: Frame,
+    bgr_fake: np.ndarray,
+    aimg: np.ndarray,
+    M: np.ndarray,
+    override_alpha: np.ndarray | None = None,
+    *,
+    paste_regions: list[FacePasteRegion] | None = None,
+    track_id: int = 0,
+    opacity: float = 1.0,
+) -> Frame:
     """Paste bgr_fake back onto target_img via the inverse affine of M.
 
     Restricts work to the face bbox in output coordinates and warps a
@@ -477,14 +793,30 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, 
     IM_crop[1, 2] -= y1p
     crop_w, crop_h = x2p - x1p, y2p - y1p
 
-    soft_alpha = _get_soft_alpha(face_h)
+    soft_alpha = override_alpha if override_alpha is not None else _get_soft_alpha(face_h)
     bgr_fake_crop = cv2.warpAffine(bgr_fake, IM_crop, (crop_w, crop_h), borderMode=cv2.BORDER_REPLICATE)
     alpha_crop = cv2.warpAffine(soft_alpha, IM_crop, (crop_w, crop_h), borderValue=0)
 
+    if paste_regions is not None:
+        # The warped alpha is the authoritative generated-pixel geometry.
+        # Keep it beside the frame for final-resolution post-processing rather
+        # than attempting to recover the same region from pixel differences.
+        paste_regions.append(
+            FacePasteRegion(
+                bounds=(x1p, y1p, x2p, y2p),
+                alpha=np.ascontiguousarray(alpha_crop),
+                track_id=int(track_id),
+                opacity=float(np.clip(opacity, 0.0, 1.0)),
+            )
+        )
+
     target_crop = target_img[y1p:y2p, x1p:x2p]
 
-    if _HAS_TORCH_CUDA:
-        # Scale alpha to [0, 1] on device — cheaper to upload uint8 than float.
+    if _HAS_TORCH_CUDA and os.environ.get("DLC_GPU_PASTE_BACK") == "1":
+        # This is an opt-in diagnostic path. In the live pipeline the source,
+        # mask, and destination are already CPU arrays, so three PCIe uploads
+        # plus a synchronized download usually cost far more than this small
+        # face-local blend saves on a discrete GPU.
         mask_t = torch.from_numpy(alpha_crop).cuda().float().mul_(1.0 / 255.0).unsqueeze(2)
         fake_t = torch.from_numpy(bgr_fake_crop).float().cuda()
         tgt_t = torch.from_numpy(target_crop).float().cuda()
@@ -502,7 +834,12 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, 
     return target_img
 
 
-def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
+def swap_face(
+    source_face: Face,
+    target_face: Face,
+    temp_frame: Frame,
+    paste_regions: list[FacePasteRegion] | None = None,
+) -> Frame:
     """Optimized face swapping with better memory management and performance."""
     face_swapper = get_face_swapper()
     if face_swapper is None:
@@ -538,16 +875,24 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         if not temp_frame.flags['C_CONTIGUOUS']:
             temp_frame = np.ascontiguousarray(temp_frame)
 
-        # Use paste_back=False and our optimized paste-back
+        # Use paste_back=False and the application's one common paste path.
         if any("DmlExecutionProvider" in p for p in modules.globals.execution_providers):
             with modules.globals.dml_lock:
-                bgr_fake, M = face_swapper.get(
+                model_result = face_swapper.get(
                     temp_frame, target_face, source_face, paste_back=False
                 )
         else:
-            bgr_fake, M = face_swapper.get(
+            model_result = face_swapper.get(
                 temp_frame, target_face, source_face, paste_back=False
             )
+
+        semantic_alpha = None
+        if isinstance(model_result, SwapResult):
+            bgr_fake = model_result.face_bgr
+            M = model_result.affine
+            semantic_alpha = model_result.alpha
+        else:
+            bgr_fake, M = model_result
 
         if bgr_fake is None:
             return original_frame
@@ -560,7 +905,87 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         _face_size = face_swapper.input_size[0]
         _aimg_dummy = np.empty((_face_size, _face_size, 3), dtype=np.uint8)
 
-        swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M)
+        color_match_strength = float(
+            np.clip(
+                getattr(modules.globals, "color_match_strength", 0.0),
+                0.0,
+                1.0,
+            )
+        )
+        if color_match_strength > 0.0:
+            aligned_target = cv2.warpAffine(
+                original_frame,
+                M,
+                (_face_size, _face_size),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REFLECT_101,
+            )
+            bgr_fake = _match_aligned_face_color(
+                bgr_fake,
+                aligned_target,
+                color_match_strength,
+                int(getattr(target_face, "track_id", 0) or 0),
+            )
+
+        # --- Frequency-domain repair ---
+        hf_strength = float(getattr(modules.globals, "repair_hf_strength", 0.0) or 0.0)
+        checkerboard = float(getattr(modules.globals, "repair_checkerboard", 0.0) or 0.0)
+        wavelet = float(getattr(modules.globals, "repair_wavelet", 0.0) or 0.0)
+        if semantic_alpha is None and (
+            hf_strength > 0.0 or checkerboard > 0.0 or wavelet > 0.0
+        ):
+            aligned_original = cv2.warpAffine(
+                original_frame, M, (_face_size, _face_size),
+                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101,
+            )
+            bgr_fake = apply_frequency_repair(
+                bgr_fake, aligned_original,
+                hf_strength=hf_strength,
+                checkerboard_attenuation=checkerboard,
+                wavelet_strength=wavelet,
+            )
+
+        # Native-256 owns fusion semantics: its learned alpha is used directly.
+        # Legacy INSwapper has no mask output, so derive the optional boundary
+        # mask before mutating the destination and paste exactly once.
+        paste_alpha = semantic_alpha
+        if paste_alpha is None and getattr(
+            modules.globals, "repair_boundary_mask", False
+        ):
+            try:
+                _current_soft = _get_soft_alpha(_face_size)
+                aligned_original = cv2.warpAffine(
+                    original_frame, M, (_face_size, _face_size),
+                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101,
+                )
+                new_mask = content_aware_boundary_mask(
+                    bgr_fake, aligned_original, _current_soft,
+                )
+                paste_alpha = new_mask
+            except Exception:
+                pass
+
+        if paste_regions is None:
+            # Preserve the legacy private-call shape for existing embedders
+            # and tests that replace the paste function.
+            swapped_frame = _fast_paste_back(
+                temp_frame,
+                bgr_fake,
+                _aimg_dummy,
+                M,
+                override_alpha=paste_alpha,
+            )
+        else:
+            swapped_frame = _fast_paste_back(
+                temp_frame,
+                bgr_fake,
+                _aimg_dummy,
+                M,
+                override_alpha=paste_alpha,
+                paste_regions=paste_regions,
+                track_id=int(getattr(target_face, "track_id", 0) or 0),
+                opacity=opacity,
+            )
 
     except Exception as e:
         print(f"Error during face swap: {e}")
@@ -570,9 +995,6 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
     # Now, work with the guaranteed uint8 'swapped_frame'
 
     if mouth_mask_enabled: # Check if mouth_mask is enabled
-        # Create a mask for the target face
-        face_mask = create_face_mask(target_face, original_frame) # Use original_frame for mask creation geometry
-
         # Create the mouth mask using the ORIGINAL frame (before swap) for cutout
         mouth_mask, mouth_cutout, mouth_box, lower_lip_polygon = (
             create_lower_mouth_mask(target_face, original_frame) # Use original_frame for real mouth cutout
@@ -582,7 +1004,7 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         if mouth_cutout is not None and mouth_box != (0,0,0,0):
             # Apply mouth area (from original) onto the 'swapped_frame'
             swapped_frame = apply_mouth_area(
-                swapped_frame, mouth_cutout, mouth_box, face_mask, lower_lip_polygon
+                swapped_frame, mouth_cutout, mouth_box, lower_lip_polygon
             )
 
             # Draw bounding box only while slider is being dragged
@@ -647,128 +1069,323 @@ def get_faces_optimized(frame: Frame, use_cache: bool = True) -> Optional[List[F
 # --- END: Mac M1-M5 Optimized Face Detection ---
 
 # --- START: Helper function for interpolation and sharpening ---
-def apply_post_processing(current_frame: Frame, swapped_face_bboxes: List[np.ndarray]) -> Frame:
-    """Applies sharpening and interpolation with Apple Silicon optimizations."""
+def _feathered_bbox_mask(
+    shape: tuple[int, ...], swapped_face_bboxes: List[np.ndarray]
+) -> np.ndarray:
+    """Return a soft union of face ellipses without rectangular ROI edges."""
+    height, width = shape[:2]
+    mask = np.zeros((height, width), dtype=np.uint8)
+    smallest = min(height, width)
+    for bbox in swapped_face_bboxes:
+        if not hasattr(bbox, "__iter__") or len(bbox) != 4:
+            continue
+        x1, y1, x2, y2 = [int(round(float(value))) for value in bbox]
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(width, x2), min(height, y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        center = ((x1 + x2) // 2, (y1 + y2) // 2)
+        axes = (max(1, (x2 - x1) // 2), max(1, (y2 - y1) // 2))
+        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
+        smallest = min(smallest, x2 - x1, y2 - y1)
+    if not np.any(mask):
+        return mask
+    kernel = max(3, int(round(smallest * 0.08)) | 1)
+    kernel = min(kernel, 31)
+    return cv2.GaussianBlur(mask, (kernel, kernel), 0)
+
+
+def _face_mask_roi(
+    shape: tuple[int, ...],
+    swapped_face_bboxes: List[np.ndarray],
+    paste_regions: List[FacePasteRegion] | None,
+    alpha_scale: float,
+) -> tuple[tuple[int, int, int, int], np.ndarray] | None:
+    """Return the smallest output ROI containing the union face alpha."""
+    height, width = shape[:2]
+    valid_regions = []
+    for region in paste_regions or ():
+        if not isinstance(region, FacePasteRegion):
+            continue
+        x1, y1, x2, y2 = region.bounds
+        if (
+            x1 < 0
+            or y1 < 0
+            or x2 > width
+            or y2 > height
+            or x2 <= x1
+            or y2 <= y1
+            or region.alpha.shape != (y2 - y1, x2 - x1)
+        ):
+            continue
+        valid_regions.append(region)
+    if valid_regions:
+        ux1 = min(region.bounds[0] for region in valid_regions)
+        uy1 = min(region.bounds[1] for region in valid_regions)
+        ux2 = max(region.bounds[2] for region in valid_regions)
+        uy2 = max(region.bounds[3] for region in valid_regions)
+        mask = np.zeros((uy2 - uy1, ux2 - ux1), dtype=np.uint8)
+        route_scale = float(np.clip(alpha_scale, 0.0, 1.0))
+        for region in valid_regions:
+            x1, y1, x2, y2 = region.bounds
+            scale = route_scale * float(np.clip(region.opacity, 0.0, 1.0))
+            alpha = region.alpha
+            if scale < 0.999:
+                alpha = np.clip(
+                    alpha.astype(np.float32) * scale,
+                    0,
+                    255,
+                ).astype(np.uint8)
+            destination = mask[y1 - uy1:y2 - uy1, x1 - ux1:x2 - ux1]
+            np.maximum(destination, alpha, out=destination)
+        return (ux1, uy1, ux2, uy2), mask
+
+    # Compatibility path for callers that have only detector boxes. This
+    # preserves their established mask shape while the optimized live path
+    # avoids allocating a full-frame mask entirely.
+    full_mask = _feathered_bbox_mask(shape, swapped_face_bboxes)
+    if not np.any(full_mask):
+        return None
+    x, y, roi_width, roi_height = cv2.boundingRect(full_mask)
+    if roi_width <= 0 or roi_height <= 0:
+        return None
+    return (
+        (x, y, x + roi_width, y + roi_height),
+        full_mask[y:y + roi_height, x:x + roi_width].copy(),
+    )
+
+
+def _masked_uint8_blend(
+    background: np.ndarray,
+    foreground: np.ndarray,
+    alpha: np.ndarray,
+) -> np.ndarray:
+    """Blend one uint8 ROI through a uint8 alpha using OpenCV SIMD."""
+    alpha_3c = cv2.merge([alpha, alpha, alpha])
+    foreground_part = cv2.multiply(
+        foreground,
+        alpha_3c,
+        scale=1.0 / 255.0,
+    )
+    background_part = cv2.multiply(
+        background,
+        255 - alpha_3c,
+        scale=1.0 / 255.0,
+    )
+    return cv2.add(foreground_part, background_part)
+
+
+def _seam_protected_mask(alpha: np.ndarray) -> np.ndarray:
+    """Suppress adjustment through the translucent paste transition."""
+    normalized = alpha.astype(np.float32) * (1.0 / 255.0)
+    interior = np.clip((normalized - 0.45) * (1.0 / 0.43), 0.0, 1.0)
+    interior *= interior * (3.0 - 2.0 * interior)
+    return np.clip(interior * 255.0, 0, 255).astype(np.uint8)
+
+
+def apply_post_processing(
+    current_frame: Frame,
+    swapped_face_bboxes: List[np.ndarray],
+    motion_matrix: np.ndarray | None = None,
+    reference_frame: Frame | None = None,
+    paste_regions: List[FacePasteRegion] | None = None,
+    paste_alpha_scale: float = 1.0,
+) -> Frame:
+    """Apply face-local sharpening, temporal smoothing, and detail repair."""
     global PREVIOUS_FRAME_RESULT
 
     sharpness_value = getattr(modules.globals, "sharpness", 0.0)
     enable_interpolation = getattr(modules.globals, "enable_interpolation", False)
+    camera_detail = float(
+        getattr(modules.globals, "repair_camera_detail", 0.0) or 0.0
+    )
+    boundary_strength = float(
+        getattr(modules.globals, "repair_boundary_strength", 0.0) or 0.0
+    )
 
-    # Skip copy when no post-processing is active
-    if sharpness_value <= 0.0 and not enable_interpolation:
+    def finish(frame: Frame) -> Frame:
+        return match_camera_detail(
+            frame,
+            reference_frame,
+            swapped_face_bboxes,
+            strength=camera_detail,
+            paste_regions=paste_regions,
+            paste_alpha_scale=paste_alpha_scale,
+            boundary_strength=boundary_strength,
+        )
+
+    # Skip every allocation when no post-processing is active.
+    if (
+        sharpness_value <= 0.0
+        and not enable_interpolation
+        and camera_detail <= 0.0
+        and boundary_strength <= 0.0
+    ):
         PREVIOUS_FRAME_RESULT = None
         return current_frame
 
+    if sharpness_value <= 0.0 and not enable_interpolation:
+        PREVIOUS_FRAME_RESULT = None
+        return finish(current_frame)
+
+    face_context = _face_mask_roi(
+        current_frame.shape,
+        swapped_face_bboxes,
+        paste_regions,
+        paste_alpha_scale,
+    )
+    if face_context is None:
+        PREVIOUS_FRAME_RESULT = (
+            current_frame.copy() if enable_interpolation else None
+        )
+        return finish(current_frame)
+
+    (x1, y1, x2, y2), face_mask = face_context
     processed_frame = current_frame.copy()
+    processed_roi = processed_frame[y1:y2, x1:x2]
 
-    # 1. Apply Sharpening (if enabled) with optimized kernel for Apple Silicon
-    sharpness_value = getattr(modules.globals, "sharpness", 0.0)
-    if sharpness_value > 0.0 and swapped_face_bboxes:
-        height, width = processed_frame.shape[:2]
-        for bbox in swapped_face_bboxes:
-            # Ensure bbox is iterable and has 4 elements
-            if not hasattr(bbox, '__iter__') or len(bbox) != 4:
-                # print(f"Warning: Invalid bbox format for sharpening: {bbox}") # Debug
-                continue
-            x1, y1, x2, y2 = bbox
-            # Ensure coordinates are integers and within bounds
-            try:
-                 x1, y1 = max(0, int(x1)), max(0, int(y1))
-                 x2, y2 = min(width, int(x2)), min(height, int(y2))
-            except ValueError:
-                # print(f"Warning: Could not convert bbox coordinates to int: {bbox}") # Debug
-                continue
+    # Both adjustment and blend stay inside the exact pasted ROI. Sharpening
+    # uses only the solid interior, so the fusion transition cannot acquire a
+    # brighter/crisper ring than either adjoining region.
+    if sharpness_value > 0.0:
+        try:
+            sigma = 2 if IS_APPLE_SILICON else 3
+            sharpened_roi = gpu_sharpen(
+                processed_roi,
+                strength=sharpness_value,
+                sigma=sigma,
+            )
+            processed_roi[:] = _masked_uint8_blend(
+                processed_roi,
+                sharpened_roi,
+                _seam_protected_mask(face_mask),
+            )
+        except cv2.error:
+            pass
 
-
-            if x2 <= x1 or y2 <= y1:
-                continue
-
-            face_region = processed_frame[y1:y2, x1:x2]
-            if face_region.size == 0:
-                continue
-
-            # Apply sharpening (GPU-accelerated when CUDA OpenCV is available)
-            try:
-                sigma = 2 if IS_APPLE_SILICON else 3
-                sharpened_region = gpu_sharpen(face_region, strength=sharpness_value, sigma=sigma)
-                processed_frame[y1:y2, x1:x2] = sharpened_region
-            except cv2.error:
-                pass
-
-
-    # 2. Apply Interpolation (if enabled)
-    enable_interpolation = getattr(modules.globals, "enable_interpolation", False)
+    # Warp only the destination face ROI. The previous implementation produced
+    # and blended three full 720p float32 frames even though every pixel outside
+    # this mask was restored unchanged afterward.
     interpolation_weight = getattr(modules.globals, "interpolation_weight", 0.2)
-
-    final_frame = processed_frame # Start with the current (potentially sharpened) frame
-
-    if enable_interpolation and 0 < interpolation_weight < 1:
-        if PREVIOUS_FRAME_RESULT is not None and PREVIOUS_FRAME_RESULT.shape == processed_frame.shape and PREVIOUS_FRAME_RESULT.dtype == processed_frame.dtype:
-            # Perform interpolation
-            try:
-                 final_frame = gpu_add_weighted(
-                    PREVIOUS_FRAME_RESULT, 1.0 - interpolation_weight,
-                    processed_frame, interpolation_weight,
-                    0
-                 )
-                 # Ensure final frame is uint8
-                 final_frame = np.clip(final_frame, 0, 255).astype(np.uint8)
-            except cv2.error as interp_e:
-                 # print(f"Warning: OpenCV error during interpolation: {interp_e}") # Debug
-                 final_frame = processed_frame # Use current frame if interpolation fails
-                 PREVIOUS_FRAME_RESULT = None # Reset state if error occurs
-
-            # Update the state for the next frame *with the interpolated result*
-            PREVIOUS_FRAME_RESULT = final_frame.copy()
-        else:
-            # If previous frame invalid or doesn't match, use current frame and update state
-            if PREVIOUS_FRAME_RESULT is not None and PREVIOUS_FRAME_RESULT.shape != processed_frame.shape:
-                # print("Info: Frame shape changed, resetting interpolation state.") # Debug
-                pass
-            PREVIOUS_FRAME_RESULT = processed_frame.copy()
-    else:
-         # Interpolation is off or weight is invalid — no need to cache
-         PREVIOUS_FRAME_RESULT = None
-
-
-    return final_frame
+    can_smooth = bool(
+        enable_interpolation
+        and 0 < interpolation_weight < 1
+        and motion_matrix is not None
+        and np.any(face_mask)
+        and PREVIOUS_FRAME_RESULT is not None
+        and PREVIOUS_FRAME_RESULT.shape == processed_frame.shape
+        and PREVIOUS_FRAME_RESULT.dtype == processed_frame.dtype
+    )
+    if can_smooth:
+        try:
+            roi_matrix = np.asarray(motion_matrix, dtype=np.float32).copy()
+            roi_matrix[0, 2] -= x1
+            roi_matrix[1, 2] -= y1
+            aligned_previous_roi = cv2.warpAffine(
+                PREVIOUS_FRAME_RESULT,
+                roi_matrix,
+                (x2 - x1, y2 - y1),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REFLECT_101,
+            )
+            # More than 45% history still produces visible lag under imperfect
+            # flow, so bound legacy slider values to a stable live range.
+            current_weight = float(np.clip(interpolation_weight, 0.55, 0.95))
+            blended_roi = cv2.addWeighted(
+                aligned_previous_roi,
+                1.0 - current_weight,
+                processed_roi,
+                current_weight,
+                0.0,
+            )
+            processed_roi[:] = _masked_uint8_blend(
+                processed_roi,
+                blended_roi,
+                face_mask,
+            )
+        except (cv2.error, ValueError, TypeError):
+            pass
+    PREVIOUS_FRAME_RESULT = (
+        processed_frame.copy() if enable_interpolation else None
+    )
+    return finish(processed_frame)
 # --- END: Helper function for interpolation and sharpening ---
 
 
-def process_frame(source_face: Face, temp_frame: Frame, target_face: Face = None) -> Frame:
+def process_frame(
+    source_face: Face,
+    temp_frame: Frame,
+    target_face: Face = None,
+    many_faces_list: list | None = None,
+) -> Frame:
     """Process a single frame, swapping source_face onto detected target(s).
 
     Args:
         target_face: Pre-detected target face. When provided, skips the
             internal face detection call (saves ~30-40ms per frame).
             Ignored when many_faces mode is active.
+        many_faces_list: Pre-detected target faces for many_faces mode. When
+            provided, skips the internal get_many_faces() call so the caller
+            can supply detection-only faces (no recognition embedding, which
+            the swap never uses).  The swap result is identical either way.
     """
     if getattr(modules.globals, "opacity", 1.0) == 0:
         global PREVIOUS_FRAME_RESULT
         PREVIOUS_FRAME_RESULT = None
         return temp_frame
 
+    reference_frame = (
+        temp_frame.copy()
+        if (
+            float(
+                getattr(modules.globals, "repair_camera_detail", 0.0) or 0.0
+            )
+            > 0.0
+            or float(
+                getattr(modules.globals, "repair_boundary_strength", 0.0)
+                or 0.0
+            )
+            > 0.0
+        )
+        else None
+    )
     processed_frame = temp_frame
     swapped_face_bboxes = []
+    paste_regions: list[FacePasteRegion] = []
 
     if modules.globals.many_faces:
-        many_faces = get_many_faces(processed_frame)
+        many_faces = many_faces_list if many_faces_list is not None else get_many_faces(processed_frame)
         if many_faces:
             current_swap_target = processed_frame.copy()
             for face in many_faces:
-                current_swap_target = swap_face(source_face, face, current_swap_target)
+                current_swap_target = swap_face(
+                    source_face,
+                    face,
+                    current_swap_target,
+                    paste_regions,
+                )
                 if face is not None and hasattr(face, "bbox") and face.bbox is not None:
                     swapped_face_bboxes.append(face.bbox.astype(int))
             processed_frame = current_swap_target
     else:
         if target_face is None:
             target_face = get_one_face(processed_frame)
-        if target_face:
-            processed_frame = swap_face(source_face, target_face, processed_frame)
+        if target_face is not None:
+            processed_frame = swap_face(
+                source_face,
+                target_face,
+                processed_frame,
+                paste_regions,
+            )
             if hasattr(target_face, "bbox") and target_face.bbox is not None:
                 swapped_face_bboxes.append(target_face.bbox.astype(int))
 
-    final_frame = apply_post_processing(processed_frame, swapped_face_bboxes)
+    final_frame = apply_post_processing(
+        processed_frame,
+        swapped_face_bboxes,
+        reference_frame=reference_frame,
+        paste_regions=paste_regions,
+    )
     return final_frame
 
 
@@ -781,8 +1398,24 @@ def process_frame_v2(temp_frame: Frame, temp_frame_path: str = "") -> Frame:
         PREVIOUS_FRAME_RESULT = None
         return temp_frame
 
+    reference_frame = (
+        temp_frame.copy()
+        if (
+            float(
+                getattr(modules.globals, "repair_camera_detail", 0.0) or 0.0
+            )
+            > 0.0
+            or float(
+                getattr(modules.globals, "repair_boundary_strength", 0.0)
+                or 0.0
+            )
+            > 0.0
+        )
+        else None
+    )
     processed_frame = temp_frame # Start with the input frame
     swapped_face_bboxes = [] # Keep track of where swaps happened
+    paste_regions: list[FacePasteRegion] = []
 
     # Determine source/target pairs based on mode
     source_target_pairs = []
@@ -881,22 +1514,32 @@ def process_frame_v2(temp_frame: Frame, temp_frame_path: str = "") -> Frame:
             else: # Fallback: if no map, use default source for the single detected face (if any)
                 source_face = default_source_face()
                 target_face = get_one_face(processed_frame, detected_faces) # Use faces already detected
-                if source_face and target_face:
+                if source_face is not None and target_face is not None:
                     source_target_pairs.append((source_face, target_face))
 
 
     # Perform swaps based on the collected pairs
     current_swap_target = processed_frame.copy() # Apply swaps sequentially
     for source_face, target_face in source_target_pairs:
-        if source_face and target_face:
-            current_swap_target = swap_face(source_face, target_face, current_swap_target)
+        if source_face is not None and target_face is not None:
+            current_swap_target = swap_face(
+                source_face,
+                target_face,
+                current_swap_target,
+                paste_regions,
+            )
             if target_face is not None and hasattr(target_face, "bbox") and target_face.bbox is not None:
                 swapped_face_bboxes.append(target_face.bbox.astype(int))
     processed_frame = current_swap_target # Assign final result
 
 
     # Apply sharpening and interpolation
-    final_frame = apply_post_processing(processed_frame, swapped_face_bboxes)
+    final_frame = apply_post_processing(
+        processed_frame,
+        swapped_face_bboxes,
+        reference_frame=reference_frame,
+        paste_regions=paste_regions,
+    )
 
     return final_frame
 
@@ -1296,16 +1939,15 @@ def apply_mouth_area(
     frame: np.ndarray,
     mouth_cutout: np.ndarray,
     mouth_box: tuple,
-    face_mask: np.ndarray, # Full face mask (for blending edges)
     mouth_polygon: np.ndarray, # Specific polygon for the mouth area itself
 ) -> np.ndarray:
 
     # Basic validation
     if (frame is None or mouth_cutout is None or mouth_box is None or
-        face_mask is None or mouth_polygon is None):
+        mouth_polygon is None):
         # print("Warning: Invalid input (None value) to apply_mouth_area") # Optional debug
         return frame
-    if (mouth_cutout.size == 0 or face_mask.size == 0 or len(mouth_polygon) < 3):
+    if mouth_cutout.size == 0 or len(mouth_polygon) < 3:
         # print("Warning: Invalid input (empty array/polygon) to apply_mouth_area") # Optional debug
         return frame
 

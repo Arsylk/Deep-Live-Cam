@@ -10,6 +10,7 @@ report of which code path the app will take.
 from __future__ import annotations
 
 import platform as _platform
+from pathlib import Path
 import sys
 from typing import List, Tuple
 
@@ -68,7 +69,26 @@ def camera_backends() -> List[Tuple[int, int]]:
 
 
 def accelerator_label() -> str:
-    if HAS_CUDA_PROVIDER:
+    requested_swapper = "auto"
+    try:
+        index = sys.argv.index("--swapper-backend")
+        requested_swapper = sys.argv[index + 1]
+    except (ValueError, IndexError):
+        pass
+    root = Path(__file__).resolve().parents[1]
+    ncnn_assets = (
+        root / "arch-linux" / "ncnn" / "libdeep_live_cam_ncnn.so",
+        root / "models" / "ncnn" / "inswapper_128.ncnn.param",
+        root / "models" / "ncnn" / "inswapper_128.ncnn.bin",
+        root / "models" / "ncnn" / "inswapper_128_emap.npy",
+    )
+    if (
+        IS_LINUX
+        and requested_swapper != "ort"
+        and all(path.is_file() for path in ncnn_assets)
+    ):
+        return "Vulkan/ncnn swapper (AMD) + CPU ONNX"
+    if HAS_CUDA_PROVIDER and HAS_TORCH_CUDA:
         return "CUDA (NVIDIA)"
     if IS_APPLE_SILICON and HAS_COREML_PROVIDER:
         return "CoreML (Apple Neural Engine)"

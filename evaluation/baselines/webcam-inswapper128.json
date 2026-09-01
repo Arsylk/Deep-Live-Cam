@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0",
+  "baseline_id": "arch-webcam-inswapper128-natural-indoor-v1",
+  "recorded_at": "2026-08-14T11:45:02+02:00",
+  "registered_at": "2026-08-14T11:53:00+02:00",
+  "status": "active-internal-baseline",
+  "pipeline": {
+    "input": "Arch physical webcam owner copy with natural-indoor profile",
+    "processor": "INSWapper-128",
+    "backend": "ncnn Vulkan",
+    "hardware": "AMD Radeon RX 570",
+    "return": "Android Camera2 120",
+    "resolution": [1280, 720],
+    "processing_fps_mean": 4.807816
+  },
+  "camera_profile": {
+    "name": "natural-indoor",
+    "mode": "MJPEG 1280x720@30",
+    "controls": {
+      "brightness": -12,
+      "contrast": 12,
+      "saturation": 40,
+      "hue": 0,
+      "gamma": 95,
+      "gain": 0,
+      "sharpness": 2,
+      "backlight_compensation": 0,
+      "power_line_frequency": 1,
+      "auto_exposure": 3,
+      "exposure_dynamic_framerate": 0,
+      "white_balance_automatic": 1
+    }
+  },
+  "capture": {
+    "pairing": "same in-process invocation",
+    "frames": 50,
+    "sample_fps": 5.0,
+    "observed_sample_fps": 4.849258,
+    "lossless_codec": "FFV1 bgr0",
+    "queue_drops": 0,
+    "reference_sha256": "6f4a15028baecb44795c772a58b64a25744f985793c81ae549113d5237eb9402",
+    "reference_content_sha256": "062256e2b73fda4f1b2d8fe46ddacea29272206d5a67599a294f871409db4b98",
+    "processed_sha256": "a59f753c4cc934d4b76467ffdcb0335d0319a5ad875576eebe83d1b1eacf384f",
+    "processed_content_sha256": "0f7aa3c5cda90900fd4b9a97cc78b7d0e76f154ab21e11ee66ddaddc6eb60850",
+    "capture_manifest_sha256": "16a2143b80488470ffac4d718287f51512a328fb483b60dda6c9aa6337bab6c2",
+    "run_manifest_sha256": "8302daf8ed5f2dc46e905d4c85a1f59a7f5d292b5eaa8fc6ebe87e0249d84f65"
+  },
+  "artifacts": {
+    "source_identity_sha256": "ffab81a7403df2184d517f5966b68ebcda502d85011f7314a377528afdb7e415",
+    "model_param_sha256": "c17153ac3591219ae2514b79683006449085f9a21413c490f036a907063bd68b",
+    "model_bin_sha256": "764e03c66cb0644f8420b3ea1105faace1207538574643ee45fa55caec2e7cb8",
+    "git_commit": "230217ec11595d979922a4f636e92ade50608702",
+    "working_tree_dirty": true,
+    "working_tree_status_sha256": "43d61314a56441857a16802e2352347b5c418e10ffd14cfed2642666dff32cca"
+  },
+  "metrics": {
+    "face_stability_score": 82.696,
+    "face_excess_flicker_p95": 0.09074,
+    "seam_temporal_std": 0.73882,
+    "seam_ring_delta_lab": 6.61954,
+    "face_luma_mismatch": 0.52578,
+    "face_chroma_mismatch_lab": 0.25336,
+    "detail_ratio_error": 0.38403,
+    "detection_miss_percent": 0.0,
+    "landmark_correction_p95_percent": 4.01612,
+    "pipeline_ms_mean": 213.90547,
+    "pipeline_ms_p95": 260.49463,
+    "vmaf_signal_preservation": 95.038194,
+    "ssim_signal_preservation": 0.992004,
+    "psnr_signal_preservation": 38.982689,
+    "processed_exact_repeat_percent_at_sample_cadence": 0.0,
+    "processed_blockiness_ratio": 1.060144,
+    "swap_applied_percent": 100.0,
+    "face_measurable_percent": 100.0,
+    "core_changed_pixels_percent_mean": 81.87606,
+    "core_mean_absolute_delta_mean": 9.57928
+  },
+  "local_paths": {
+    "active_pointer": "arch-linux/runtime/android-phone-processed/benchmarks/active-baseline.json",
+    "capture_directory": "arch-linux/runtime/android-phone-processed/benchmarks/captures/arch-webcam-inswapper128-natural-indoor-v1",
+    "run_manifest": "arch-linux/runtime/android-phone-processed/benchmarks/captures/arch-webcam-inswapper128-natural-indoor-v1/run.json"
+  },
+  "rights": {
+    "capture_subject_consent": true,
+    "source_identity_authorized": false,
+    "use": "internal-only",
+    "note": "No source-identity authorization was asserted, so this is not a release-readiness claim."
+  },
+  "windows_comparison": {
+    "candidate_id": "win11-rtx2060-inswapper128-20260812-historical-v2",
+    "status": "diagnostic-only",
+    "reason": "The historical Windows run used different raw footage, frame count, cadence, and lacks a source-identity fingerprint. No winner was declared."
+  },
+  "superseded_capture_ids": {
+    "arch-webcam-inswapper128-ncnn-rx570-v1": "sampler cadence aliased to half-rate; source pixels retained for the corrected derivative",
+    "arch-webcam-inswapper128-ncnn-rx570-v2": "retimed timestamps but retained an incorrect 5 FPS stream header",
+    "arch-webcam-inswapper128-ncnn-rx570-v3": "correct cadence and pixels, superseded by v4 to add a container-independent decoded-corpus fingerprint",
+    "arch-webcam-inswapper128-ncnn-rx570-v4": "fingerprinted derivative of the original half-rate sample; superseded by a fresh direct capture",
+    "arch-webcam-inswapper128-ncnn-rx570-v5": "fresh direct capture, superseded by byte-identical v6 media with decoded-corpus fingerprints",
+    "arch-webcam-inswapper128-ncnn-rx570-v6": "superseded by the first baseline with the measured natural-indoor camera profile and exact owner control vector"
+  },
+  "interpretation": [
+    "VMAF, SSIM, and PSNR measure signal/background preservation and also penalize the intended face replacement.",
+    "Face-core pixel change confirms a visual effect, not correct identity similarity.",
+    "A definitive candidate comparison must replay the exact frozen decoded-frame corpus and use the same source identity, dimensions, frame count, and sample cadence."
+  ]
+}

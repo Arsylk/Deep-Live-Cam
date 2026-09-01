@@ -19,7 +19,10 @@ if sys.platform == "win32":
         if os.path.isdir(_torch_lib):
             _candidate_dirs.append(_torch_lib)
         _nvidia_dir = os.path.join(_sp, "nvidia")
-        if os.path.isdir(_nvidia_dir):
+        # This project intentionally pairs PyTorch CUDA 12.8 with ONNX
+        # Runtime 1.26. Do not put separately installed CUDA-13 wheels ahead
+        # of torch/lib: mixing their cuDNN DLLs fails with WinError 127.
+        if not os.path.isdir(_torch_lib) and os.path.isdir(_nvidia_dir):
             for _pkg in os.listdir(_nvidia_dir):
                 _bin_dir = os.path.join(_nvidia_dir, _pkg, "bin")
                 if os.path.isdir(_bin_dir):
@@ -30,6 +33,16 @@ if sys.platform == "win32":
                 os.add_dll_directory(_d)
             except (OSError, AttributeError):
                 pass
+
+    # Pin the matching CUDA/cuDNN DLL family before ORT creates a provider
+    # session. Later imports reuse this already loaded module.
+    try:
+        import torch as _torch  # noqa: F401
+    except (ImportError, OSError) as _torch_error:
+        print(
+            f"[startup] PyTorch CUDA preload skipped: {_torch_error}",
+            flush=True,
+        )
 
     # On Windows, register OpenVINO DLL directories so onnxruntime's
     # OpenVINOExecutionProvider can find openvino.dll.  This must happen

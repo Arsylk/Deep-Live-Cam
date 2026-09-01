@@ -1,0 +1,30 @@
+<ExternalCamera>
+    <Provider>
+        <!-- 0 and 1 are intentionally NOT ignored: they are bind-mounted over
+             with the processed loopback feeds and become external cameras
+             100 (back node) and 101 (front node). Raw loopback nodes 20/21
+             and remaining physical nodes stay ignored. -->
+        <ignore>
+            <id>2</id>
+            <id>6</id>
+            <id>7</id>
+            <id>20</id>
+            <id>21</id>
+            <id>32</id>
+            <id>33</id>
+        </ignore>
+    </Provider>
+    <Device>
+        <Facing>FRONT</Facing>
+        <HardwareLevel>LEVEL_3</HardwareLevel>
+        <MaxJpegBufferSize bytes="4194304"/>
+        <NumVideoBuffers count="4"/>
+        <NumStillBuffers count="2"/>
+        <FpsList>
+            <Limit width="640" height="480" fpsBound="30.0"/>
+            <Limit width="1280" height="720" fpsBound="30.0"/>
+            <Limit width="1920" height="1080" fpsBound="30.0"/>
+        </FpsList>
+        <MinimumStreamSize width="320" height="240"/>
+    </Device>
+</ExternalCamera>

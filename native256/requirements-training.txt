@@ -1,0 +1,9 @@
+# Training/export dependencies only. The application requirements are unchanged.
+# Install the PyTorch build appropriate for the training machine first when its
+# package index differs from PyPI (for example a CUDA-specific wheel index).
+torch>=2.3,<3
+numpy>=2.0,<3
+pillow>=10,<13
+onnx>=1.17,<2
+onnxruntime>=1.20,<2
+pytest>=8,<10

@@ -1,0 +1,4 @@
+/pkg/
+/src/
+/v4l2loopback-*.tar.gz
+/*.pkg.tar.*

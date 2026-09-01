@@ -42,10 +42,43 @@ camera_input_combobox: Any | None = None # Placeholder for UI element if needed
 webcam_preview_running: bool = False
 show_fps: bool = False
 
+# Labeled whole-frame quality automation for network live mode.
+quality_mode: str = "balanced"  # monitor, balanced, or strict
+quality_auto_correct: bool = True
+processing_enabled: bool = True
+processing_off_output: str = "passthrough"
+
+# Motion-aware live face tracking.  Detection remains authoritative; optical
+# flow bridges detector cadence and short misses while these bounds prevent a
+# stale face from being held indefinitely.
+tracking_enabled: bool = True
+detection_interval: int = 1
+tracking_smoothing: float = 0.65
+tracking_grace_frames: int = 5
+minimum_detection_score: float = 0.45
+minimum_face_size: int = 64
+color_match_strength: float = 0.35
+
+# Frequency-domain repair (anti-detector post-processing)
+repair_hf_strength: float = 0.0         # HF noise restoration (0=off, 0.5=max)
+repair_checkerboard: float = 0.0        # Checkerboard attenuation (0=off, 1.0=max)
+repair_wavelet: float = 0.0             # Wavelet stat matching (0=off, 1.0=max)
+repair_boundary_mask: bool = False       # Content-aware boundary mask
+repair_boundary_strength: float = 0.0    # Target-preserving seam reblend (0-1)
+# Deprecated compatibility field. Direct target-texture transfer failed the
+# measured quality gates and is intentionally not applied or shown in the UI.
+repair_skin_texture: float = 0.0
+repair_camera_detail: float = 0.0        # Final-resolution adaptive detail match (0-4)
+
 # System Configuration
 max_memory: int | None = None        # Memory limit in GB? (Needs clarification)
 execution_providers: List[str] = []  # e.g., ['CUDAExecutionProvider', 'CPUExecutionProvider']
 execution_threads: int | None = None # Number of threads for CPU execution
+swapper_model: str = "auto"         # auto, inswapper-128, instyle-256, simswap-512, or native-256
+swapper_backend: str = "auto"       # auto, ort, or ncnn (independent of ORT EP)
+active_swapper_model: str = "not-loaded"
+active_swapper_backend: str = "not-loaded"
+active_swapper_resolution: int = 0   # native generated face edge, not output canvas
 headless: bool | None = None         # Run without UI?
 log_level: str = "error"             # Logging level (e.g., 'debug', 'info', 'warning', 'error')
 

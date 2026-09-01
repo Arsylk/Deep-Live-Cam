@@ -1,0 +1,83 @@
+<ExternalCamera>
+    <Provider>
+        <!-- Expose only /dev/video20. The external provider adds its stable
+             namespace offset of 100, so the OS sees Camera2 ID 120. All known
+             physical/ISP and stale dual-loopback indices remain excluded. -->
+        <ignore>
+            <id>0</id>
+            <id>1</id>
+            <id>2</id>
+            <id>3</id>
+            <id>4</id>
+            <id>5</id>
+            <id>6</id>
+            <id>7</id>
+            <id>8</id>
+            <id>9</id>
+            <id>10</id>
+            <id>11</id>
+            <id>12</id>
+            <id>13</id>
+            <id>14</id>
+            <id>15</id>
+            <id>16</id>
+            <id>17</id>
+            <id>18</id>
+            <id>19</id>
+            <id>21</id>
+            <id>22</id>
+            <id>23</id>
+            <id>24</id>
+            <id>25</id>
+            <id>26</id>
+            <id>27</id>
+            <id>28</id>
+            <id>29</id>
+            <id>30</id>
+            <id>31</id>
+            <id>32</id>
+            <id>33</id>
+            <id>34</id>
+            <id>35</id>
+            <id>36</id>
+            <id>37</id>
+            <id>38</id>
+            <id>39</id>
+            <id>40</id>
+            <id>41</id>
+            <id>42</id>
+            <id>43</id>
+            <id>44</id>
+            <id>45</id>
+            <id>46</id>
+            <id>47</id>
+            <id>48</id>
+            <id>49</id>
+            <id>50</id>
+            <id>51</id>
+            <id>52</id>
+            <id>53</id>
+            <id>54</id>
+            <id>55</id>
+            <id>56</id>
+            <id>57</id>
+            <id>58</id>
+            <id>59</id>
+            <id>60</id>
+            <id>61</id>
+            <id>62</id>
+            <id>63</id>
+        </ignore>
+    </Provider>
+    <Device>
+        <MaxJpegBufferSize bytes="4194304"/>
+        <NumVideoBuffers count="4"/>
+        <NumStillBuffers count="2"/>
+        <FpsList>
+            <Limit width="640" height="480" fpsBound="30.0"/>
+            <Limit width="1280" height="720" fpsBound="30.0"/>
+            <Limit width="1920" height="1080" fpsBound="30.0"/>
+        </FpsList>
+        <MinimumStreamSize width="320" height="240"/>
+    </Device>
+</ExternalCamera>

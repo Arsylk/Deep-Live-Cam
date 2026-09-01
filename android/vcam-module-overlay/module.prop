@@ -1,0 +1,6 @@
+id=android-vcam
+name=Android Processed Camera Prototype
+version=v0.4.9
+versionCode=24
+author=arsylk + Codex
+description=Reconnect-safe Android camera fan-out to Windows and Arch processors, stable Camera2 ID 120 return, and front-scoped webcam microphone.

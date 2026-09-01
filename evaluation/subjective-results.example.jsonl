@@ -1,0 +1,4 @@
+{"sample_id":"android-identity-001-ordinary-still","rater_id":"rater-001","condition":"reference","attention_check_passed":true,"ratings":{"overall":5,"naturalness":5,"temporal_stability":5,"face_boundary":5,"color_consistency":5}}
+{"sample_id":"android-identity-001-ordinary-still","rater_id":"rater-001","condition":"processed","attention_check_passed":true,"ratings":{"overall":4,"naturalness":4,"temporal_stability":4,"face_boundary":4,"color_consistency":4}}
+{"sample_id":"android-identity-001-ordinary-still","rater_id":"rater-002","condition":"reference","attention_check_passed":true,"ratings":{"overall":5,"naturalness":5,"temporal_stability":5,"face_boundary":5,"color_consistency":5}}
+{"sample_id":"android-identity-001-ordinary-still","rater_id":"rater-002","condition":"processed","attention_check_passed":true,"ratings":{"overall":3,"naturalness":3,"temporal_stability":4,"face_boundary":3,"color_consistency":4}}

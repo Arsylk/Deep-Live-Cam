@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Deep-Live-Cam Manager
+GenericName=Camera Router and Manager
+Comment=Operate camera routes, identity and processing, and the stable system camera
+Exec=pkexec /usr/local/bin/deep-live-cam-tester
+TryExec=/usr/local/bin/deep-live-cam-tester
+Icon=deep-live-cam
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=camera;android;phone;webcam;video;stream;preview;diagnostics;
+StartupNotify=true
+StartupWMClass=deep-live-cam-tester

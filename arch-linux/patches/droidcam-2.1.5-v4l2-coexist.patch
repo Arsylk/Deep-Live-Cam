@@ -1,0 +1,62 @@
+--- a/src/decoder.c
++++ b/src/decoder.c
+@@ -95,20 +95,31 @@
+ int decoder_init(const char* v4l2_device, unsigned v4l2_width, unsigned v4l2_height) {
+     WEBCAM_W = v4l2_width;
+     WEBCAM_H = v4l2_height;
++    const char *configured_device = v4l2_device;
+ 
+-    if (v4l2_device) {
+-        set_v4l2_device(v4l2_device);
++    /* A shared v4l2loopback module may also own unrelated camera endpoints.
++     * Prefer the operator-selected node, then the stable coexistence alias,
++     * before falling back to legacy bus-info discovery. */
++    if (!configured_device || !*configured_device)
++        configured_device = getenv("DROIDCAM_VIDEO_DEVICE");
++
++    if (configured_device && *configured_device) {
++        set_v4l2_device(configured_device);
+         droidcam_device_fd = open_v4l2_device();
+     } else {
+-        droidcam_device_fd = find_v4l2_device(V4L2_PLATFORM_DC);
++        set_v4l2_device("/dev/droidcam");
++        droidcam_device_fd = open_v4l2_device();
+         if (droidcam_device_fd < 0) {
+-            // check for generic v4l2loopback device
+-            droidcam_device_fd = find_v4l2_device(V4L2_PLATFORM);
++            droidcam_device_fd = find_v4l2_device(V4L2_PLATFORM_DC);
++            if (droidcam_device_fd < 0) {
++                // check for generic v4l2loopback device
++                droidcam_device_fd = find_v4l2_device(V4L2_PLATFORM);
++            }
+         }
+     }
+ 
+     if (droidcam_device_fd < 0) {
+-        MSG_ERROR("Droidcam/v4l2loopback device not found (/dev/video[0-9]).\n"
++        MSG_ERROR("Droidcam/v4l2loopback device not found (/dev/droidcam or /dev/videoN).\n"
+                 "Did it install correctly?\n"
+                 "If you had a kernel update, you may need to re-install.");
+ 
+--- a/src/decoder_v4l2.c
++++ b/src/decoder_v4l2.c
+@@ -81,15 +81,15 @@
+     struct stat st;
+ 
+     if (stat(v4l2_device, &st) < 0)
+-        return 0;
++        return -1;
+ 
+     if (!S_ISCHR(st.st_mode))
+-        return 0;
++        return -1;
+ 
+     fd = open(v4l2_device, O_RDWR | O_NONBLOCK, 0);
+-    if (fd <= 0) {
++    if (fd < 0) {
+         errprint("Error opening '%s': %d '%s'\n", v4l2_device, errno, strerror(errno));
+-        return 0;
++        return -1;
+     }
+ 
+     dbgprint("Opened %s, fd:%d\n", v4l2_device, fd);

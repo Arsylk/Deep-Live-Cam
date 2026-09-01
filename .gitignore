@@ -8,6 +8,7 @@ __pycache__/
 *.backup
 tf_env/
 *.png
+!arch-linux/assets/deep-live-cam.png
 *.mp4
 *.mkv
 
@@ -25,7 +26,25 @@ models/DMDNet.pth
 faceswap/
 .vscode/
 switch_states.json
-/models
-install.bat
-/.claude
-*.bat
+/benchmark-results/
+/evaluation/results/
+
+# --- local additions: heavy artifacts and runtime state ---
+.venv/
+models/
+base/
+deployment-backups/
+.remember/
+:memory:.ses
+android/vcam-app/build/
+android/vcam-app/.gradle/
+android/vcam-app/local.properties
+android/*/build/
+*.apk
+tmp/
+
+# heavy model packs and runtime capture state (fetched/built on device)
+android/vcam-mobile-app/model-pack/
+arch-linux/runtime/
+android/vcam-mobile-app/third_party/
+android/vcam-app/app/build/

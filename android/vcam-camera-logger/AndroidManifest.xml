@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.vcam.camlog">
+
+    <application android:label="VCam Front Camera Route" android:allowBackup="false">
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposedminversion" android:value="93" />
+        <meta-data android:name="xposeddescription"
+            android:value="Global system front camera: replaces every front-facing camera in every app with the processed stream and routes its returned webcam audio as that session's microphone. Toggle off with /data/local/tmp/vcam_disable." />
+        <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
+    </application>
+</manifest>

@@ -1,0 +1,14 @@
+[Unit]
+Description=Deep-Live-Cam legacy camera shadow compatibility (explicit opt-in)
+Documentation=file:/usr/local/share/doc/deep-live-cam-arch/README.md
+After=systemd-modules-load.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/deep-live-cam-arch.conf
+ExecStart=/usr/bin/python3 /usr/local/lib/deep-live-cam-arch/shadow.py apply
+TimeoutStartSec=30s
+
+[Install]
+WantedBy=multi-user.target
