@@ -95,9 +95,22 @@ ACTION_ORDER = [
 ]
 
 PREPARE_SECONDS = 1.5
-REST_SECONDS = 1.6
+RETURN_SECONDS = 1.3
+DIGIT_RETURN_SECONDS = 0.8
 LEAD_IN_SECONDS = 2.5
 TRAIL_SECONDS = 2.0
+
+# The guided return prompt after each action: the operator is told how to
+# come back to the neutral pose, so every recorded cue provably ends looking
+# at the camera (the segment contract the assembler relies on).
+RETURN_LABELS = {
+    "turn_left": "Turn back — look at the camera",
+    "turn_right": "Turn back — look at the camera",
+    "look_up": "Look back at the camera",
+    "look_down": "Look back at the camera",
+    "blink": "Eyes open — look at the camera",
+    "open_mouth": "Close your mouth — look at the camera",
+}
 
 
 def preview_command(spec: dict) -> list[str]:
@@ -134,7 +147,7 @@ def preview_command(spec: dict) -> list[str]:
 
 
 def build_script() -> list[dict]:
-    """Session timeline: lead-in neutral, then prepare/perform/rest per action."""
+    """Session timeline: lead-in, then prepare/perform/return per action."""
     script: list[dict] = [
         {"kind": "lead", "action": "neutral", "seconds": LEAD_IN_SECONDS,
          "label": "Sit still, look at the camera"},
@@ -148,8 +161,12 @@ def build_script() -> list[dict]:
         script.append({"kind": "perform", "action": action,
                        "seconds": seconds,
                        "label": action})
-        script.append({"kind": "rest", "action": "neutral",
-                       "seconds": REST_SECONDS, "label": "Relax"})
+        return_seconds = (DIGIT_RETURN_SECONDS
+                          if action.startswith("digits_")
+                          else RETURN_SECONDS)
+        script.append({"kind": "return", "action": "neutral",
+                       "seconds": return_seconds,
+                       "label": RETURN_LABELS.get(action, "Look at the camera")})
     script.append({"kind": "trail", "action": "neutral",
                    "seconds": TRAIL_SECONDS,
                    "label": "Hold still — finishing"})
@@ -408,23 +425,35 @@ class RecorderWindow(QMainWindow):
             return
         now = time.monotonic()
         if self.step_index < 0 or now >= self.step_deadline:
-            self._advance_step(now)
+            # A state-machine error must surface in the activity log, never
+            # silently kill the session (the event loop would swallow it).
+            try:
+                self._advance_step(now)
+            except Exception as exc:  # noqa: BLE001 - UI guard
+                self._log_line(f"session error: {exc}")
+                self.status.set_state("session error", "failed")
+                self.step_timer.stop()
         else:
             step = self.script[self.step_index]
             elapsed = now - self.step_started
             self.progress.setValue(int(1000 * elapsed / step["seconds"]))
 
     def _advance_step(self, now: float) -> None:
-        # close the previous perform cue
-        if (self.step_index >= 0
-                and self.script[self.step_index]["kind"] == "perform"):
-            self.cues[-1]["t_end"] = round(now - self.t0, 3)
-
         self.step_index += 1
         if self.step_index >= len(self.script):
             self._stop_session()
             return
         step = self.script[self.step_index]
+        # Close the open perform cue once the guided return has completed
+        # (the next step is not a return).  The cue therefore spans the
+        # perform step AND the return, so every recorded segment contains
+        # the full gesture plus the motion back to the neutral pose.
+        if (
+            step["kind"] != "return"
+            and self.cues
+            and self.cues[-1]["t_end"] is None
+        ):
+            self.cues[-1]["t_end"] = round(now - self.t0, 3)
         self.step_started = now
         self.step_deadline = now + step["seconds"]
 
@@ -437,8 +466,12 @@ class RecorderWindow(QMainWindow):
             self._log_line(f"perform: {step['action']} "
                            f"({step['seconds']:.1f}s)")
         elif step["kind"] == "prepare":
-            self.action_label.setText(f"Get ready…")
+            self.action_label.setText("Get ready…")
             self.next_label.setText(f"next: {step['action']}")
+        elif step["kind"] == "return":
+            self.action_label.setText(step["label"])
+            self.next_label.setText(" ")
+            self._log_line(f"return: {step['label'].lower()}")
         else:
             self.action_label.setText(step["label"])
             self.next_label.setText(" ")
@@ -468,9 +501,13 @@ class RecorderWindow(QMainWindow):
             return
         self.step_timer.stop()
         now = time.monotonic()
-        if (self.step_index < len(self.script)
-                and self.step_index >= 0
-                and self.script[self.step_index]["kind"] == "perform"):
+        if (
+            self.step_index < len(self.script)
+            and self.step_index >= 0
+            and self.script[self.step_index]["kind"] in ("perform", "return")
+            and self.cues
+            and self.cues[-1]["t_end"] is None
+        ):
             self.cues[-1]["t_end"] = round(now - self.t0, 3)
         self.recording = False
         self.status.set_state("stopping", "working")
