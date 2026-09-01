@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QProcess, QTimer
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtWidgets import (
     QApplication,
@@ -367,7 +367,6 @@ class RecorderWindow(QMainWindow):
             "-map", "0:v:0",
             "-y", f"{file_out}|{preview_out}",
         ]
-        from PySide6.QtCore import QProcess
         self.record_process = QProcess(self)
         self.record_process.setProcessChannelMode(
             QProcess.ProcessChannelMode.MergedChannels)
