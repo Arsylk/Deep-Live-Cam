@@ -4,6 +4,114 @@
   Real-time face swap and video deepfake with a single click and only a single image.
 </p>
 
+This fork extends the upstream real-time face-swap project into a complete
+two-host system: an Arch Linux workstation (slot 1) paired with an Android
+phone (Apollo, Mi 10T) over SRT, plus a phone-side global front-camera
+substitution module. The upstream GUI/face-swap core is untouched; everything
+below is additive or a contained modification.
+
+## New distinct components
+
+### 1. Android capture app — `android/vcam-app/` (APK, v1.7)
+- Camera2 capture → OpenGL stage → hardware H.264 (c2.qti.avc) → local TCP →
+  on-device ffmpeg → SRT to Arch. Streams the front camera's **native
+  portrait transport 720x1280@30** (720p-class, ~10 Mbps, B-frame-free).
+- The GL stage renders aspect-true: the sensor's full landscape FOV is
+  rotated upright into the portrait canvas — no crop, no zoom, no bars.
+- Allow-listed live controls (set from the Arch manager or the app UI):
+  lens selection, rotation, zoom, exposure compensation, AE/AWB locks,
+  stabilization.
+- Runs a processed-return receiver and publishes the return as processed
+  Camera2 ID 120 on the phone (with `vcam-module-overlay`).
+
+### 2. Xposed module — `android/vcam-camera-logger/` (APK, v0.4.2)
+Global system front camera for the phone:
+- Discovers **every** front-facing Camera2 device at runtime and replaces it
+  with the processed stream (ID 120) — no per-app tables; works on
+  multi-front devices.
+- Camera metadata spoofing for app compatibility: LENS_FACING=FRONT, the real
+  front camera's AE FPS ranges, LIMITED hardware level, and CamcorderProfile
+  redirection — CameraX/Aperture video-quality validation passes cleanly.
+- **Replace, never add**: the processed camera occupies the front's slot in
+  the enumeration (one fewer entry), verified by host tests.
+- Routes the returned webcam audio as the session microphone (Remote Submix,
+  native CAPTURE_AUDIO_OUTPUT grant for all ordinary app UIDs).
+- Global kill-switch file `/data/local/tmp/vcam_disable` — instant native
+  fallback without uninstalling. Host-testable pure routing policy
+  (`CameraRoutingPolicy`, 15+ tests).
+
+### 3. Magisk module — `android/vcam-module-overlay/`
+v4l2loopback `/dev/video20` + AOSP external-camera provider config exposing
+the processed return as Camera2 ID 120; VINTF vendor binds only.
+
+### 4. Arch native manager GUI — `arch-linux/bin/dlc_manager/`
+PySide6 desktop app (runs as root via pkexec desktop entries):
+- **Live** workspace: camera previews, wheel-guarded controls.
+- **Input** tab: semantic source selection (Arch webcam / phone front /
+  phone back / prerecorded / **assembler**) with per-input device cards.
+- **Render** workspace: record → offline high-quality render (graded) →
+  replay as a camera input; file management.
+- **Assembler input card**: compose prompt sequences from the puppet
+  library, assemble & load in <1 s; full prerecorded-style preview
+  (aspect-true, drag/zoom, grid, play/pause/seek).
+- Phone-route reconciliation: single-owner serialization of the phone's one
+  SRT return endpoint across local/Windows/direct modes.
+
+### 5. Puppet prompt system — `arch-linux/bin/puppet_*.py`
+- `puppet_recorder.py`: guided recording GUI (16-action session, cue sheet,
+  live activity log, live preview during takes via an encoder tee).
+- `puppet_library_build.py`: recording → offline face-swap (A-/B+ graded
+  pipeline) → cue-based segment cutting → concat-safe segment library
+  (verified: keyframes every 12, no B-frames).
+- `puppet_assemble.py`: prompt → segment selection → ffmpeg concat-copy.
+  Any prompt sequence ("turn_left, blink, say 4-7-2") becomes a playing
+  camera source in about a second, no inference at prompt time.
+- `/opt/github/LivePortrait` (sibling checkout, not in this repo): parameter-
+  driven fallback renderer for novel motions.
+
+### 6. Offline render + quality grading
+`arch-linux/bin/offline_renderer.py` + `render_quality_score.py`: full-
+pipeline offline face swap with AI auto-tuning, GFPGAN enhancement option,
+swap-relative realism scoring (seam/detail deltas) and ArcFace identity
+scoring, banded grades (A+ … F).
+
+## Major modifications to existing pieces
+
+- **Native portrait phone transport**: the phone→Arch stream is the camera's
+  native 720x1280@30, carried unmodified to the processor and preview taps;
+  the only reshape is the fit into the locked 1280x720 system-camera output
+  at delivery. Processor width/height fully parameterized.
+- **Receiver**: file_relay input (reads MP4s directly), gapless prerecorded
+  looping via `-stream_loop` (no black flash), once/freeze playback modes,
+  live pan/zoom over zmq (crop@live, no decoder restart), seek + pause
+  control files, aspect-true fitting of any input at the locked output.
+- **Sender**: VAAPI encode with periodic forced keyframes (fixes mid-stream
+  join corruption), three local taps (11000/11001/11002) + processor source
+  tap (11005).
+- **Camera adapters**: allow-listed controls persisted to the phone app and
+  applied on input selection (lens, rotation, zoom, exposure, stabilization).
+- **Verified port map**: all 14 UDP taps + 5 SRT endpoints documented with
+  producer/consumer ownership in `arch-linux/README.md` ("Fixed routes");
+  single-reader rule enforced by convention and tested.
+- **Tests**: 300+ host tests covering the manager, routing policy, receiver
+  routes, prerecorded/assembler behavior, and the phone pipeline.
+
+## Deployed layout (production phone + Arch)
+
+- Arch: services (`deep-live-cam-{sender,receiver,phone-processed,
+  phone-return-relay}.service`), installed manager + helpers under
+  `/usr/local/lib/deep-live-cam-arch/`, desktop entries with pkexec.
+- Phone: vcam-app v1.7 + Xposed module v0.4.2 (LSPosed/Vector) + overlay
+  module; global front camera with kill switch.
+
+See `arch-linux/README.md` for the full pipeline topology and the verified
+port map, `arch-linux/PRERECORDED_WORKFLOW.md` for the record/render/replay
+workflow, and `.remember/` (local, untracked) for session history.
+
+---
+
+
+
 <p align="center">
 <a href="https://trendshift.io/repositories/11395" target="_blank"><img src="https://trendshift.io/api/badge/repositories/11395" alt="hacksider%2FDeep-Live-Cam | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
